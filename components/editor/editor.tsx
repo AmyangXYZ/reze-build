@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { hexToLinear, hexToSrgb } from "@/lib/color"
-import { BONE_PALETTE, RIGIDBODY_PALETTE, VERTEX_COLOR } from "./overlay-palette"
 
 /** The three live overlay layers the engine rebuilds from the pose each frame. */
 type Layer = "bones" | "rigidbodies" | "vertices"
@@ -114,15 +113,16 @@ export default function Editor() {
     }
   }, [])
 
-  // The engine holds the layers, so pushing them here is the whole binding —
-  // there is no second copy of the overlay state to keep in step.
+  // The engine holds the layers AND their colours, so pushing the toggles here
+  // is the whole binding — no second copy of the state, and no palette to drift
+  // out of step with what design, rig and studio draw.
   useEffect(() => {
     const engine = engineRef.current
     if (!engine) return
     const name = modelName ? MODEL_KEY : null
-    engine.setBoneOverlay(shown.bones ? name : null, { palette: BONE_PALETTE })
-    engine.setRigidbodyOverlay(shown.rigidbodies ? name : null, { palette: RIGIDBODY_PALETTE })
-    engine.setVertexOverlay(shown.vertices ? name : null, VERTEX_COLOR)
+    engine.setBoneOverlay(shown.bones ? name : null)
+    engine.setRigidbodyOverlay(shown.rigidbodies ? name : null)
+    engine.setVertexOverlay(shown.vertices ? name : null)
   }, [shown, modelName, ready])
 
   const openFolder = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
