@@ -18,7 +18,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-resizable-panels": "^4.12.2",
-    "reze-engine": "^0.54.11",
+    "reze-engine": "file:../reze-engine/engine",
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
