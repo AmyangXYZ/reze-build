@@ -17,6 +17,37 @@ round-trips byte-for-byte. Correctness of that document outranks every feature.
 redistribution terms, and a browser tool that ships someone's model to a server
 is one a lot of creators will not touch.
 
+# Every edit is data
+
+An edit that exists only as a gesture cannot be scripted, tested, diffed, or
+handed to anything else. So every operation is a pure named transform on the
+document — `(document, params) -> document` — and the UI is one caller of it,
+never the only one.
+
+That makes the tool AI-friendly without an AI feature in it. A user describes a
+job, has a model produce the params, and pastes them in. Batch-binding a dress is
+the obvious case: hundreds of rigidbodies and joints is exactly the shape of work
+a person does not want to click through and a model is good at emitting.
+
+What it demands:
+
+- **Parameters are named, quantified and bounded.** Units and valid ranges stated
+  where they are declared — the way the engine's `#param float <name> <default>
+  <min> <max>` already does for effects. "damping 0.8" means nothing on its own.
+- **Names are the key, never indices.** `{"bone": "左足"}`, not `{"bone": 47}`.
+  The family's id/name rule, and indices shift under edits anyway.
+- **Operations are batch-shaped.** The unit of work is a list; one rigidbody is a
+  list of one.
+- **Every panel can show its state as JSON and take it back.**
+
+Pasted input is untrusted, so two rules travel with it:
+
+- **Preview before apply.** Never let a paste silently rewrite two hundred bodies.
+- **One paste is one undo.**
+
+The payoff is not only AI. Pure transforms are directly testable, which is what a
+tool whose whole promise is byte-exact round-tripping needs most.
+
 # Editor chrome
 
 The tokens are defined and explained in `app/globals.css` under "Editor chrome
