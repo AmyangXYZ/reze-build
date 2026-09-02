@@ -2772,6 +2772,34 @@ export default function Lab() {
     [editDoc],
   )
 
+  /**
+   * Click a bone on the model.
+   *
+   * The list in the dock and the skeleton on the canvas are two views of one
+   * thing, so they have to be two ways of doing the same act — a rig you can
+   * see and cannot touch is a picture of a rig. Whichever you use, the same
+   * bone ends up selected and the same inspector opens.
+   *
+   * Only while Bones is open. The overlay is what makes a bone visible, and a
+   * click that selected something invisible would be a click that changed the
+   * app for no reason the user could see. It is also what keeps this from
+   * competing with the camera: a drag still orbits, because a drag is not a
+   * click.
+   */
+  const pickBoneAt = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (openModelRow !== "bones") return
+      const engine = engineRef.current
+      if (!engine || !castEntry) return
+      const rect = e.currentTarget.getBoundingClientRect()
+      const hit = engine.pickBone(e.clientX - rect.left, e.clientY - rect.top, { modelName: castEntry.id })
+      // A miss CLEARS. Clicking empty space to deselect is what every viewport
+      // does, and leaving the last pick standing makes the inspector look stuck.
+      setPickedBone(hit?.boneName ?? null)
+    },
+    [openModelRow, engineRef, castEntry],
+  )
+
   // A pick belongs to the section that made it. Leaving a section with one
   // still selected would narrow the overlay the next time you open it, for a
   // reason that is no longer on screen.
@@ -5324,6 +5352,7 @@ export default function Lab() {
       )}
       <canvas
         ref={canvasRef}
+        onClick={pickBoneAt}
         className={cn("absolute touch-none object-contain", !frameRect && "inset-0 h-full w-full")}
         style={frameStyle}
       />
