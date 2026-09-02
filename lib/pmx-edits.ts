@@ -13,7 +13,7 @@
 // Each returns a NEW document sharing everything it did not touch. Cheap to
 // apply, trivial to undo (keep the previous one), and safe to preview.
 
-import type { PmxBone, PmxDocument } from "reze-engine"
+import type { PmxBone, PmxDocument, PmxMaterial } from "reze-engine"
 
 /** What an edit did, so a panel can report it and a preview can show it. */
 export interface EditResult {
@@ -84,4 +84,138 @@ export function duplicateBoneNames(doc: PmxDocument): string[] {
     seen.add(b.name)
   }
   return [...duplicates]
+}
+
+/**
+ * A patch against one named material. Every field optional: the unit of work is
+ * "change these, leave the rest", which is what makes a panel of forty fields
+ * one transform rather than forty.
+ */
+export interface MaterialPatch {
+  /** Which material. Names, never indices — indices shift under edits. */
+  name: string
+  /** The new name, when the edit is a rename. */
+  rename?: string
+  nameEn?: string
+  /** 0-1 display-space RGBA, exactly as the file stores it. */
+  diffuse?: [number, number, number, number]
+  specular?: [number, number, number]
+  /** Shininess. PMX writes it unbounded; MMD's own UI stops at 100. */
+  specularPower?: number
+  ambient?: [number, number, number]
+  /** Bit 0 double-sided · 1 ground shadow · 2 to self-shadow map · 3 from
+   *  self-shadow · 4 edge · 5 vertex colour · 6 point draw · 7 line draw. */
+  drawFlags?: number
+  edgeColor?: [number, number, number, number]
+  /** 0-unbounded; MMD's slider stops at 2. */
+  edgeSize?: number
+  memo?: string
+}
+
+export interface SetMaterialsParams {
+  /** Batch-shaped: one material is a list of one. */
+  materials: MaterialPatch[]
+}
+
+/**
+ * Edits materials in place.
+ *
+ * Nothing here moves an index. A material owns a contiguous run of the index
+ * buffer and its position in the list IS the draw order, so changing what a
+ * material looks like is the one class of material edit that cannot break the
+ * document — which is why it is the first one to exist.
+ *
+ * A rename is included because a material's name is how everything downstream
+ * addresses it, this panel included, and renaming through the same call keeps
+ * "change the name and the colour" one undo instead of two.
+ */
+export function setMaterials(doc: PmxDocument, params: SetMaterialsParams): EditResult {
+  const byName = new Map(doc.materials.map((m, i) => [m.name, i]))
+  const missing: string[] = []
+  const materials = doc.materials.slice()
+  let changed = 0
+
+  for (const patch of params.materials) {
+    const index = byName.get(patch.name)
+    if (index === undefined) {
+      missing.push(patch.name)
+      continue
+    }
+    const before = materials[index]
+    const after: PmxMaterial = { ...before }
+    if (patch.rename !== undefined) after.name = patch.rename
+    if (patch.nameEn !== undefined) after.nameEn = patch.nameEn
+    if (patch.diffuse) after.diffuse = [...patch.diffuse]
+    if (patch.specular) after.specular = [...patch.specular]
+    if (patch.specularPower !== undefined) after.specularPower = patch.specularPower
+    if (patch.ambient) after.ambient = [...patch.ambient]
+    if (patch.drawFlags !== undefined) after.drawFlags = patch.drawFlags
+    if (patch.edgeColor) after.edgeColor = [...patch.edgeColor]
+    if (patch.edgeSize !== undefined) after.edgeSize = patch.edgeSize
+    if (patch.memo !== undefined) after.memo = patch.memo
+    materials[index] = after
+    changed++
+  }
+
+  if (changed === 0) return { document: doc, summary: "Changed nothing", missing }
+  return {
+    document: { ...doc, materials },
+    summary: changed === 1 ? `Edited ${params.materials[0].name}` : `Edited ${changed} materials`,
+    missing,
+  }
+}
+
+/**
+ * A patch against one named bone.
+ *
+ * Deliberately narrower than the material one. Position, name and the display
+ * flags are self-contained; the parent, the tail, the append source and every
+ * IK link are INDICES into the bone list, and an editor that lets those be typed
+ * before there is a transform that re-points the references around them is an
+ * editor that corrupts documents. They stay read-only until each has its own
+ * named operation.
+ */
+export interface BonePatch {
+  name: string
+  rename?: string
+  nameEn?: string
+  position?: [number, number, number]
+  /** 変形階層. Higher layers deform after lower ones. */
+  layer?: number
+  /** The bone flags bitfield — see PmxBone. */
+  flags?: number
+}
+
+export interface SetBonesParams {
+  bones: BonePatch[]
+}
+
+export function setBones(doc: PmxDocument, params: SetBonesParams): EditResult {
+  const byName = new Map(doc.bones.map((b, i) => [b.name, i]))
+  const missing: string[] = []
+  const bones = doc.bones.slice()
+  let changed = 0
+
+  for (const patch of params.bones) {
+    const index = byName.get(patch.name)
+    if (index === undefined) {
+      missing.push(patch.name)
+      continue
+    }
+    const after: PmxBone = { ...bones[index] }
+    if (patch.rename !== undefined) after.name = patch.rename
+    if (patch.nameEn !== undefined) after.nameEn = patch.nameEn
+    if (patch.position) after.position = [...patch.position]
+    if (patch.layer !== undefined) after.layer = patch.layer
+    if (patch.flags !== undefined) after.flags = patch.flags
+    bones[index] = after
+    changed++
+  }
+
+  if (changed === 0) return { document: doc, summary: "Changed nothing", missing }
+  return {
+    document: { ...doc, bones },
+    summary: changed === 1 ? `Edited ${params.bones[0].name}` : `Edited ${changed} bones`,
+    missing,
+  }
 }

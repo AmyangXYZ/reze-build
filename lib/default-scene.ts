@@ -48,7 +48,7 @@ const EMPTY_SETTINGS: SceneDoc["settings"] = {
   // because nothing is travelling — the model stands in bind pose and you turn
   // the camera around it. alpha/beta in RADIANS, which is what the engine takes.
   camera: {
-    distance: 31.5,
+    distance: 28,
     alpha: Math.PI,
     beta: Math.PI / 2.5,
     target: [0, 11.5, 0],

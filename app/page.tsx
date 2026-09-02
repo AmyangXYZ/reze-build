@@ -74,6 +74,7 @@ import {
   Upload,
   Sparkles,
   Blocks,
+  Circle,
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -135,6 +136,9 @@ import { useBrowseSurface } from "@/hooks/use-browse-surface"
 import { useStoredRect } from "@/hooks/use-stored-rect"
 import { useDockSlot } from "@/hooks/use-dock-slot"
 import { useZOrder } from "@/hooks/use-z-order"
+import { PmxInspector } from "@/components/editor/pmx-inspector"
+import { setBones, setMaterials, type BonePatch, type MaterialPatch } from "@/lib/pmx-edits"
+import { saveDocument } from "@/lib/document-store"
 import { DEFAULT_SCENE, DEMO_SCENE, EMPTY_SCENE } from "@/lib/default-scene"
 import {
   assetsDocOf,
@@ -582,8 +586,62 @@ const MODEL_ROWS = [
   { id: "rigidbodies", name: "Rigidbodies", icon: Boxes, count: (d: PmxDocument) => d.rigidbodies.length },
   { id: "joints", name: "Joints", icon: Link2, count: (d: PmxDocument) => d.joints.length },
   { id: "frames", name: "Display frames", icon: Layers, count: (d: PmxDocument) => d.displayFrames.length },
-  { id: "textures", name: "Textures", icon: Image, count: (d: PmxDocument) => d.textures.length },
 ] as const
+
+/**
+ * A section's body: which of its items the overlay is narrowed to.
+ *
+ * Picking is a TOGGLE against the section's own answer. The section already
+ * draws all of them, so clicking a row narrows to it and clicking it again
+ * widens back out — there is no "show all" button because the state it would
+ * restore is the one you started in.
+ *
+ * Row idiom is the material sidebar's, deliberately. Bones use it too: they ask
+ * the same question of another list, and a bone list drawn differently would
+ * read as a different KIND of control rather than the same one pointed
+ * elsewhere.
+ */
+function ItemPicker({
+  items,
+  empty,
+  picked,
+  onPick,
+}: {
+  items: { name: string }[]
+  empty: string
+  picked: string | null
+  onPick: (name: string | null) => void
+}) {
+  if (items.length === 0) return <p>{empty}</p>
+  return (
+    // Capped and scrolling: a model with sixty materials would otherwise push
+    // every section below it off the dock.
+    <div className="thin-scrollbar -mx-1 max-h-56 overflow-y-auto px-1">
+      {items.map((m, i) => (
+        <button
+          key={m.name + "#" + i}
+          onClick={() => onPick(picked === m.name ? null : m.name)}
+          className={cn(
+            "group/item flex h-6 w-full items-center gap-1.5 rounded pr-0.5 pl-1 text-left",
+            picked === m.name ? "bg-blue-400/15" : "hover:bg-white/[0.05]",
+          )}
+        >
+          <Circle
+            className={cn("size-1.5 shrink-0 fill-current", picked === m.name ? "text-blue-400" : "text-muted-foreground")}
+          />
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-xs",
+              picked === m.name ? "text-blue-400" : "text-muted-foreground group-hover/item:text-foreground",
+            )}
+          >
+            {m.name}
+          </span>
+        </button>
+      ))}
+    </div>
+  )
+}
 
 function layersFor(t: Dictionary) {
   return [
@@ -2600,9 +2658,25 @@ export default function Lab() {
   // what that model actually contains.
   const [pmxDoc, setPmxDoc] = useState<PmxDocument | null>(null)
   const [openModelRow, setOpenModelRow] = useState<string | null>(null)
+  // Which item the open section has narrowed to. Null is the section's own
+  // answer — all of them — so opening a section is already an answer and
+  // picking a row refines one rather than starting one.
+  const [pickedMaterial, setPickedMaterial] = useState<string | null>(null)
+  const [pickedBone, setPickedBone] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; name: string } | null>(null)
   // Keyed on the loaded model's file, so replacing the model re-reads it and
   // nothing else does.
-  const castFile = scene.assets.models.find((m) => !m.stage)?.model.file ?? null
+  // Keyed on the LIVE cast, not on the boot document: removeModelById only
+  // touches the engine's list, so a parse keyed on the document kept reporting
+  // a model that had already gone.
+  const castEntry = cast[0] ?? null
+  const castFile = castEntry?.file ?? null
+  // Where the model's own files live, for anything that has to resolve a path
+  // the document states relative to the .pmx — the textures, so far.
+  const castDir = useMemo(() => {
+    const source = scene.assets.models.find((m) => m.model.id === castEntry?.id)?.model.source
+    return source?.kind === "folder" ? source.dir : null
+  }, [scene.assets.models, castEntry])
   // The FILE name, in the header and in the row alike.
   //
   // Not the PMX `name` field: the two disagree on most models — an author's
@@ -2619,7 +2693,7 @@ export default function Lab() {
     let stale = false
     void (async () => {
       try {
-        const entry = scene.assets.models.find((m) => !m.stage)
+        const entry = scene.assets.models.find((m) => m.model.id === castEntry?.id)
         const url = entry ? modelPmxUrl(entry.model) : null
         const bytes = url ? await (await fetch(url)).arrayBuffer() : null
         if (!stale && bytes) setPmxDoc(readPmxDocument(bytes))
@@ -2630,7 +2704,81 @@ export default function Lab() {
     return () => {
       stale = true
     }
-  }, [castFile, scene.assets.models])
+  }, [castFile, castEntry, scene.assets.models])
+
+  // The open section IS the overlay. A section names a part of the model, and
+  // the only way to see which faces a material owns or where a joint sits is on
+  // the model itself — so expanding the row draws it and collapsing takes it
+  // away. No separate visibility toggles: a checkbox for something you can turn
+  // on by looking at it is a second control for one decision.
+  //
+  // Each starts wide and narrows. Opening Materials draws every edge, which is
+  // the honest answer to "what is this mesh made of"; picking a row cuts it to
+  // that material's own run. Bones does the same with the skeleton, so the two
+  // sections teach each other.
+  useEffect(() => {
+    const engine = engineRef.current
+    if (!engine || !ready) return
+    // Selection without handles. Picking a bone here is asking WHICH bone, not
+    // asking to pose it — a model editor selects constantly and poses rarely —
+    // and a gizmo straddling the joint hides the very overlay you selected it
+    // to look at.
+    engine.setGizmoEnabled(false)
+    const id = openModelRow && castEntry ? castEntry.id : null
+    const on = (section: string) => (openModelRow === section ? id : null)
+    engine.setBoneOverlay(on("bones"))
+    engine.setRigidbodyOverlay(on("rigidbodies"))
+    engine.setJointOverlay(on("joints"))
+    engine.setVertexOverlay(on("materials"), { material: pickedMaterial })
+    engine.setSelectedBone(on("bones"), pickedBone)
+  }, [engineRef, ready, openModelRow, castEntry, pickedMaterial, pickedBone])
+
+  /**
+   * An edit from the inspector: run the named transform, keep what it returns.
+   *
+   * The document in state is the SOURCE OF TRUTH — it is what an export writes,
+   * so an edit that lands anywhere else is an edit that does not ship. IndexedDB
+   * follows it rather than leading: the browser's copy is the draft you are
+   * working on, which means it has to be written on every commit and not only
+   * when something remembers to save.
+   *
+   * A rename moves the selection with it, or the panel would be pointing at a
+   * name the document no longer has and would close itself the moment you
+   * finished typing.
+   */
+  const editDoc = useCallback(
+    (run: (doc: PmxDocument) => { document: PmxDocument }) =>
+      setPmxDoc((doc) => {
+        if (!doc) return doc
+        const next = run(doc).document
+        if (next === doc) return doc
+        void saveDocument(next)
+        return next
+      }),
+    [],
+  )
+  const editMaterial = useCallback(
+    (patch: MaterialPatch) => {
+      editDoc((doc) => setMaterials(doc, { materials: [patch] }))
+      if (patch.rename) setPickedMaterial(patch.rename)
+    },
+    [editDoc],
+  )
+  const editBone = useCallback(
+    (patch: BonePatch) => {
+      editDoc((doc) => setBones(doc, { bones: [patch] }))
+      if (patch.rename) setPickedBone(patch.rename)
+    },
+    [editDoc],
+  )
+
+  // A pick belongs to the section that made it. Leaving a section with one
+  // still selected would narrow the overlay the next time you open it, for a
+  // reason that is no longer on screen.
+  useEffect(() => {
+    if (openModelRow !== "materials") setPickedMaterial(null)
+    if (openModelRow !== "bones") setPickedBone(null)
+  }, [openModelRow])
   const [cameraTab, setCameraTab] = useState<"lens" | "focus">("lens")
   const [postTab, setPostTab] = useState<"grade" | "tone" | "bloom" | "outline">("grade")
   const [lightTab, setLightTab] = useState<"world" | "sun">("world")
@@ -3399,6 +3547,7 @@ export default function Lab() {
   const dockZ = useZOrder()
   const [inspectorRaise, setInspectorRaise] = useState(0)
   const inspectorZ = useZOrder(inspectorRaise)
+  const pmxZ = useZOrder()
 
   // ── Inspect a cast member ──
   // Clicking a cast row selects the model and opens the right dock on ITS
@@ -5395,6 +5544,60 @@ export default function Lab() {
         </DialogContent>
       </Dialog>
 
+      {/* ── The selected bone or material ──
+          The on-demand right dock, against the left one's constant column. It
+          is summoned by a SELECTION and goes with it, so there is no open/close
+          state of its own to get out of sync with what is highlighted on the
+          canvas — the same pick drives both. */}
+      {pmxDoc && (pickedBone || pickedMaterial) && (
+        <Surface
+          placement="side"
+          // The materials panel's exact geometry: below the top-right pills,
+          // clear of the transport. Two right-hand docks that stopped at
+          // different heights would read as two different systems.
+          className="top-[3.75rem] bottom-auto max-h-[calc(100%-7.75rem)] animate-[panel-in_0.2s_cubic-bezier(0.32,0.72,0,1)]"
+          style={{ zIndex: pmxZ.z }}
+          onPointerDownCapture={pmxZ.onPointerDownCapture}
+          onFocusCapture={pmxZ.onFocusCapture}
+        >
+          <PmxInspector
+            doc={pmxDoc}
+            bone={pickedBone}
+            material={pickedMaterial}
+            files={bundleFiles()}
+            baseDir={castDir}
+            onEditBone={editBone}
+            onEditMaterial={editMaterial}
+            closeLabel={t.lab.closeMaterials}
+            onClose={() => {
+              setPickedBone(null)
+              setPickedMaterial(null)
+            }}
+          />
+        </Surface>
+      )}
+
+      {/* Deleting the model asks first, and the yes takes the browser's copy
+          with it. IndexedDB is the draft you are working on, not an archive of
+          what you deleted — leaving bytes behind after a delete is exactly the
+          leak "nothing is uploaded" is a promise against. */}
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        onOpenChange={(o) => !o && setConfirmDelete(null)}
+        title={t.lab.deleteModel.title(confirmDelete?.name ?? "")}
+        body={t.lab.deleteModel.body}
+        confirmLabel={t.lab.deleteClip.confirm}
+        cancelLabel={t.lab.deleteClip.cancel}
+        onConfirm={() => {
+          const id = confirmDelete?.id
+          setConfirmDelete(null)
+          if (!id) return
+          removeModelById(id)
+          setPmxDoc(null)
+          void clearLocalBundle()
+        }}
+      />
+
       {/* A shelf, not a switch: the same shape as the language dialog because it
           is the same act — pick one of a short curated list — and a third pack
           costs a row here and nothing else. */}
@@ -6038,6 +6241,11 @@ export default function Lab() {
                   place; nothing else moves. */}
               {cast.length === 0 && pendingCast === 0 && (
                 <div className="flex h-8 items-center gap-2.5 px-4">
+                  {/* The loaded row's own shape, empty: same swatch slot, same
+                      name column, same height. A row that changes geometry when
+                      it has nothing in it makes the group jump on every load and
+                      delete, and the swatch is what says a model goes HERE. */}
+                  <span className="size-5 shrink-0 rounded-interior border border-dashed border-line-strong" aria-hidden />
                   <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{t.lab.noModel}</span>
                   <CastAction
                     icon={Plus}
@@ -6094,7 +6302,7 @@ export default function Lab() {
                             icon={X}
                             danger
                             label={t.lab.aria.deleteModel(displayName(m.file))}
-                            onClick={() => removeModelById(m.id)}
+                            onClick={() => setConfirmDelete({ id: m.id, name: displayName(m.file) })}
                           />
                         </>
                       }
@@ -6112,8 +6320,10 @@ export default function Lab() {
                   group label back when one model was the normal scene; a cast is
                   something people keep adding to, and the button you use again
                   and again cannot be one you have to go looking for. */}
-              {pmxDoc &&
-                MODEL_ROWS.map((row) => (
+              {/* Standing whether or not a model is loaded. The sections ARE
+                  the editor; hiding them when the dock is empty makes the app
+                  look like it has no features until you feed it a file. */}
+              {MODEL_ROWS.map((row) => (
                 <LayerRow
                   key={row.id}
                   icon={row.icon}
@@ -6122,9 +6332,25 @@ export default function Lab() {
                   open={openModelRow === row.id}
                   onToggle={() => setOpenModelRow(openModelRow === row.id ? null : row.id)}
                 >
+                  {row.id === "materials" ? (
+                    <ItemPicker
+                      items={pmxDoc?.materials ?? []}
+                      empty={t.lab.noModel}
+                      picked={pickedMaterial}
+                      onPick={setPickedMaterial}
+                    />
+                  ) : row.id === "bones" ? (
+                    <ItemPicker
+                      items={pmxDoc?.bones ?? []}
+                      empty={t.lab.noModel}
+                      picked={pickedBone}
+                      onPick={setPickedBone}
+                    />
+                  ) : (
                     <p>Not editable yet.</p>
-                  </LayerRow>
-                ))}
+                  )}
+                </LayerRow>
+              ))}
             </StackGroup>
 
             {/* EVERY clip the scene plays, in one place. A character's motion
@@ -7329,6 +7555,11 @@ export default function Lab() {
               anything under a ~1080px window ate into the track until it was a
               few pixels wide. A pill floating over the canvas has never needed
               to clear the docks — it is centred, and they are not. */}
+          {/* No clip, no transport. Its controls are all about WHEN, and a
+              model with no motion has one pose — a scrub bar over it is a
+              control whose every position gives the same answer. modelNames is
+              already "cast carrying a clip", asked whether it is empty. */}
+          {modelNames.length > 0 && (
           <div className="pointer-events-none absolute inset-x-3 bottom-3 flex justify-center">
             {/* max-w-fit is what returns the collapsed pill to the ORIGINAL slider
             length: the track is flex-1 with min-w-[min(16rem,30vw)], and a
@@ -7379,6 +7610,7 @@ export default function Lab() {
               />
             </div>
           </div>
+          )}
 
           {/* ── Properties ──
               The other half of the editor: the timeline says WHERE the keys

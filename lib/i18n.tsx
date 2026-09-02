@@ -634,6 +634,10 @@ const en = {
       world: "World",
     },
     /** The delete confirmation shared by every clip row. */
+    deleteModel: {
+      title: (name: string) => `Delete ${name}?`,
+      body: "It leaves the editor, and the copy kept in this browser goes with it. The folder you opened is not touched.",
+    },
     deleteClip: {
       title: (kind: string) => `Delete ${kind}?`,
       body: "It leaves this scene. The file you uploaded is not touched.",
@@ -1364,6 +1368,10 @@ const zh: Dictionary = {
       image: "媒体",
       dome: "天空盒",
       world: "世界",
+    },
+    deleteModel: {
+      title: (name: string) => `删除 ${name}？`,
+      body: "模型将从编辑器中移除，浏览器内保存的副本也一并删除。你打开的文件夹不受影响。",
     },
     deleteClip: {
       title: (kind: string) => `删除${kind}？`,

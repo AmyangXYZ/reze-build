@@ -50,7 +50,16 @@ export function LayerRow({
         onClick={onToggle}
         aria-expanded={open}
         className={cn(
-          "flex w-full items-center gap-2.5 px-4 py-2 text-left transition-colors",
+          // No transition on the band. It is the only thing in the row that
+          // takes time: everything else swaps in one commit, so a 150ms
+          // transition leaves the row you just closed still lit for nine frames
+          // after the row you opened has already arrived — read as the old row
+          // pulsing on its way out.
+          //
+          // select-none because the header is a button wrapping text, and
+          // clicking from one row to the next drags a selection across the
+          // titles.
+          "flex w-full items-center gap-2.5 px-4 py-2 text-left select-none",
           open ? "bg-white/[0.05]" : "hover:bg-white/[0.04]",
         )}
       >

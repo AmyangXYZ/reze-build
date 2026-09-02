@@ -30,3 +30,11 @@ export function hexToRgba(hex: string, alpha = 1): [number, number, number, numb
   const n = parseInt(hex.replace("#", ""), 16)
   return [((n >> 16) & 0xff) / 255, ((n >> 8) & 0xff) / 255, (n & 0xff) / 255, alpha]
 }
+
+/** The other direction, for a picker that has to open on the value already in
+ *  the document. PMX stores colour as 0-1 floats in display space, which is the
+ *  same space hexToRgba reads, so this is its exact inverse. */
+export function rgbToHex(c: readonly number[]): string {
+  const b = (x: number) => Math.round(Math.min(1, Math.max(0, x)) * 255)
+  return "#" + [b(c[0]), b(c[1]), b(c[2])].map((n) => n.toString(16).padStart(2, "0")).join("")
+}
