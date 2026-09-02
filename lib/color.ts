@@ -10,7 +10,7 @@ import { Vec3 } from "reze-engine"
  *   · linear light — what a material's albedo is. addGround's diffuseColor and
  *     gridLineColor, world/sun/bloom colour.
  *
- * Same pair as reze-design's lib/scene-settings.
+ * Same pair as reze-build's lib/scene-settings.
  */
 export function hexToSrgb(hex: string): Vec3 {
   const n = parseInt(hex.replace("#", ""), 16)
