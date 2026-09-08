@@ -219,3 +219,46 @@ export function setBones(doc: PmxDocument, params: SetBonesParams): EditResult {
     missing,
   }
 }
+
+/**
+ * A patch against the document's own header — the model's name and comment,
+ * in both languages PMX carries them. Not batch-shaped like the others: there
+ * is exactly one of these per document, so a list of patches would only ever
+ * hold one entry.
+ */
+export interface ModelInfoPatch {
+  name?: string
+  nameEn?: string
+  comment?: string
+  commentEn?: string
+}
+
+/**
+ * Edits the document header. No index to shift, no reference to repair — the
+ * name and comment are read by nothing else in the file, which is what makes
+ * this the smallest possible edit and still worth its own named transform
+ * rather than a raw `{...doc, comment: v}` at the call site: the panel stays a
+ * form filling in a call, not a place that knows the document's shape.
+ */
+export function setModelInfo(doc: PmxDocument, patch: ModelInfoPatch): EditResult {
+  const after = { ...doc }
+  let changed = false
+  if (patch.name !== undefined) {
+    after.name = patch.name
+    changed = true
+  }
+  if (patch.nameEn !== undefined) {
+    after.nameEn = patch.nameEn
+    changed = true
+  }
+  if (patch.comment !== undefined) {
+    after.comment = patch.comment
+    changed = true
+  }
+  if (patch.commentEn !== undefined) {
+    after.commentEn = patch.commentEn
+    changed = true
+  }
+  if (!changed) return { document: doc, summary: "Changed nothing", missing: [] }
+  return { document: after, summary: "Edited the model's description", missing: [] }
+}

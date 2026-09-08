@@ -582,6 +582,7 @@ const en = {
       world: "world",
     },
     noModel: "No model",
+    modelDescription: "Description",
     ctl: {
       outline: "Outline",
       background: "Background",
@@ -1324,6 +1325,7 @@ const zh: Dictionary = {
       world: "世界",
     },
     noModel: "无模型",
+    modelDescription: "描述",
     ctl: {
       background: "背景",
       ground: "地面",

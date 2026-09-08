@@ -78,6 +78,8 @@ import {
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/textarea"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -137,7 +139,7 @@ import { useStoredRect } from "@/hooks/use-stored-rect"
 import { useDockSlot } from "@/hooks/use-dock-slot"
 import { useZOrder } from "@/hooks/use-z-order"
 import { PmxInspector } from "@/components/editor/pmx-inspector"
-import { setBones, setMaterials, type BonePatch, type MaterialPatch } from "@/lib/pmx-edits"
+import { setBones, setMaterials, setModelInfo, type BonePatch, type MaterialPatch, type ModelInfoPatch } from "@/lib/pmx-edits"
 import { saveDocument } from "@/lib/document-store"
 import { DEFAULT_SCENE, DEMO_SCENE, EMPTY_SCENE } from "@/lib/default-scene"
 import {
@@ -581,7 +583,7 @@ const otherThan = (t: Dictionary): Dictionary => (t === dictionaries.zh ? dictio
  *  document and the libraries; the shell only needs them to have names. */
 const MODEL_ROWS = [
   { id: "bones", name: "Bones", icon: Bone, count: (d: PmxDocument) => d.bones.length },
-  { id: "materials", name: "Materials", icon: Palette, count: (d: PmxDocument) => d.materials.length },
+  { id: "materials", name: "Materials", icon: MaterialSphereIcon, count: (d: PmxDocument) => d.materials.length },
   { id: "morphs", name: "Morphs", icon: Smile, count: (d: PmxDocument) => d.morphs.length },
   { id: "rigidbodies", name: "Rigidbodies", icon: Boxes, count: (d: PmxDocument) => d.rigidbodies.length },
   { id: "joints", name: "Joints", icon: Link2, count: (d: PmxDocument) => d.joints.length },
@@ -606,12 +608,24 @@ function ItemPicker({
   empty,
   picked,
   onPick,
+  onHover,
 }: {
   items: { name: string }[]
   empty: string
   picked: string | null
   onPick: (name: string | null) => void
+  /** The list's own hover, mirroring the viewport's — a preview of the pick,
+   *  not a pick. Optional: only Materials has an overlay to preview against. */
+  onHover?: (name: string | null) => void
 }) {
+  // A pick can arrive from the viewport, off-screen from wherever the list
+  // happens to be scrolled — the row is what confirms what you clicked, and a
+  // confirmation you cannot see is not one.
+  const pickedRef = useRef<HTMLButtonElement | null>(null)
+  useEffect(() => {
+    pickedRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" })
+  }, [picked])
+
   if (items.length === 0) return <p>{empty}</p>
   return (
     // Capped and scrolling: a model with sixty materials would otherwise push
@@ -620,7 +634,10 @@ function ItemPicker({
       {items.map((m, i) => (
         <button
           key={m.name + "#" + i}
+          ref={picked === m.name ? pickedRef : undefined}
           onClick={() => onPick(picked === m.name ? null : m.name)}
+          onMouseEnter={() => onHover?.(m.name)}
+          onMouseLeave={() => onHover?.(null)}
           className={cn(
             "group/item flex h-6 w-full items-center gap-1.5 rounded pr-0.5 pl-1 text-left",
             picked === m.name ? "bg-blue-400/15" : "hover:bg-white/[0.05]",
@@ -639,6 +656,91 @@ function ItemPicker({
           </span>
         </button>
       ))}
+    </div>
+  )
+}
+
+/**
+ * Which part of the model a click in the viewport means, as three buttons
+ * instead of a dock section you have to go find. It drives the SAME state the
+ * dock's own rows do — openModelRow — so there is one mode, not two synced
+ * copies of it: opening Bones from here is opening Bones, full stop.
+ *
+ * Only the modes that actually do something. Morphs and Faces are not
+ * editable yet (see MODEL_ROWS) — a button for a mode nothing happens in is
+ * worse than no button, since clicking it and watching nothing change reads
+ * as broken rather than as unbuilt.
+ */
+function ModeToolbar({
+  mode,
+  onPick,
+}: {
+  mode: string | null
+  onPick: (mode: string | null) => void
+}) {
+  const modes: { id: string | null; icon: ComponentType<{ className?: string }>; label: string }[] = [
+    { id: "bones", icon: Bone, label: "Bones" },
+    { id: "materials", icon: MaterialSphereIcon, label: "Materials" },
+    { id: null, icon: Camera, label: "Camera" },
+  ]
+  return (
+    <div className={cn(PILL, "pointer-events-auto flex h-10 items-center gap-0.5 p-1")}>
+      {modes.map(({ id, icon: Icon, label }) => (
+        <Tooltip key={label}>
+          <TooltipTrigger asChild>
+            <button
+              aria-pressed={mode === id}
+              aria-label={label}
+              onClick={() => onPick(id)}
+              className={cn(
+                "flex size-7 items-center justify-center rounded-lg transition-colors",
+                mode === id ? "bg-blue-400/15 text-blue-400" : "text-muted-foreground hover:bg-white/5 hover:text-foreground",
+              )}
+            >
+              <Icon className="size-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{label}</TooltipContent>
+        </Tooltip>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The model's own description — the PMX header's comment field, straight
+ * under the cast row it belongs to rather than tucked inside a section: it is
+ * a fact about the FILE, not a category of edit like Bones or Materials.
+ *
+ * Commits on blur only, no Enter — Enter has to stay a newline in a
+ * multi-line field. Escape reverts, same as the inspector's single-line
+ * fields, for the same reason: a half-typed paragraph abandoned by clicking
+ * elsewhere should not overwrite what was there.
+ */
+function ModelDescription({ value, placeholder, onCommit }: { value: string; placeholder: string; onCommit: (v: string) => void }) {
+  const [draft, setDraft] = useState(value)
+  const [editing, setEditing] = useState(false)
+  if (!editing && draft !== value) setDraft(value)
+  return (
+    <div className="px-4 pt-2 pb-1">
+      <Textarea
+        value={draft}
+        placeholder={placeholder}
+        onChange={(e) => setDraft(e.target.value)}
+        onFocus={() => setEditing(true)}
+        onBlur={() => {
+          setEditing(false)
+          if (draft !== value) onCommit(draft)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setDraft(value)
+            setEditing(false)
+            e.currentTarget.blur()
+          }
+        }}
+        className="min-h-14 rounded-interior border-line-strong bg-transparent px-2.5 py-1.5 text-xs shadow-none md:text-xs"
+      />
     </div>
   )
 }
@@ -2771,6 +2873,10 @@ export default function Lab() {
     },
     [editDoc],
   )
+  const editModelInfo = useCallback(
+    (patch: ModelInfoPatch) => editDoc((doc) => setModelInfo(doc, patch)),
+    [editDoc],
+  )
 
   /**
    * Click a bone on the model.
@@ -2786,19 +2892,99 @@ export default function Lab() {
    * competing with the camera: a drag still orbits, because a drag is not a
    * click.
    */
-  const pickBoneAt = useCallback(
+  const pickAt = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (openModelRow !== "bones") return
       const engine = engineRef.current
       if (!engine || !castEntry) return
       const rect = e.currentTarget.getBoundingClientRect()
-      const hit = engine.pickBone(e.clientX - rect.left, e.clientY - rect.top, { modelName: castEntry.id })
-      // A miss CLEARS. Clicking empty space to deselect is what every viewport
-      // does, and leaving the last pick standing makes the inspector look stuck.
-      setPickedBone(hit?.boneName ?? null)
+      const px = e.clientX - rect.left
+      const py = e.clientY - rect.top
+      // A miss does NOTHING — it does not clear. Orbit and pick share one
+      // gesture (a plain click), so a tap that lands a pixel off the model
+      // while you are just looking around would otherwise blow away a
+      // selection you meant to keep. Clearing it is deliberate, below —
+      // double-click, not a second single click on the same item, which is
+      // too easy to trigger by accident when re-confirming a pick.
+      if (openModelRow === "bones") {
+        const hit = engine.pickBone(px, py, { modelName: castEntry.id })
+        if (hit) setPickedBone(hit.boneName)
+      } else if (openModelRow === "materials") {
+        const hit = engine.pickMaterial(px, py, { modelName: castEntry.id })
+        if (hit) setPickedMaterial(hit.materialName)
+      }
     },
     [openModelRow, engineRef, castEntry],
   )
+
+  /** Double-click anywhere in the viewport clears the active mode's pick.
+   *  Not gated on hitting the same item again — that reintroduces the exact
+   *  precision problem a deliberate deselect gesture exists to avoid. */
+  const deselectAt = useCallback(() => {
+    if (openModelRow === "bones") setPickedBone(null)
+    else if (openModelRow === "materials") setPickedMaterial(null)
+  }, [openModelRow])
+
+  /**
+   * A material under the pointer previews as a pick before a click makes it
+   * one — see setHoveredMaterial on the engine for what that draws.
+   *
+   * Coalesced to one pickMaterial per animation frame rather than one per
+   * pointermove: the raycast walks every triangle, and a trackpad can fire
+   * that event faster than the screen repaints. Only the LATEST position
+   * survives to the frame that actually runs.
+   */
+  const hoverFrame = useRef<number | null>(null)
+  const hoverPos = useRef<{ x: number; y: number } | null>(null)
+  const hoverAt = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (openModelRow !== "materials" || pickedMaterial !== null) return
+      const rect = e.currentTarget.getBoundingClientRect()
+      hoverPos.current = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+      if (hoverFrame.current !== null) return
+      hoverFrame.current = requestAnimationFrame(() => {
+        hoverFrame.current = null
+        const engine = engineRef.current
+        const pos = hoverPos.current
+        if (!engine || !pos || !castEntry) return
+        const hit = engine.pickMaterial(pos.x, pos.y, { modelName: castEntry.id })
+        engine.setHoveredMaterial(hit ? castEntry.id : null, hit?.materialName ?? null)
+      })
+    },
+    [openModelRow, pickedMaterial, engineRef, castEntry],
+  )
+  const clearHover = useCallback(() => {
+    if (hoverFrame.current !== null) {
+      cancelAnimationFrame(hoverFrame.current)
+      hoverFrame.current = null
+    }
+    engineRef.current?.setHoveredMaterial(null, null)
+  }, [engineRef])
+  // The list's own hover — no raycast, the name is already known. Cancels any
+  // pending viewport hover so the two do not fight over which name lands last.
+  const hoverMaterialRow = useCallback(
+    (name: string | null) => {
+      if (pickedMaterial !== null) return
+      if (hoverFrame.current !== null) {
+        cancelAnimationFrame(hoverFrame.current)
+        hoverFrame.current = null
+      }
+      engineRef.current?.setHoveredMaterial(name && castEntry ? castEntry.id : null, name)
+    },
+    [pickedMaterial, engineRef, castEntry],
+  )
+  // Stale as soon as the pointer is no longer the reason a material is
+  // highlighted — a pick, or the section going away, both make it so.
+  useEffect(() => {
+    if (openModelRow !== "materials" || pickedMaterial !== null) clearHover()
+  }, [openModelRow, pickedMaterial, clearHover])
+
+  // A pick belongs to the section that made it. Leaving a section with one
+  // still selected would narrow the overlay the next time you open it, for a
+  // reason that is no longer on screen.
+  useEffect(() => {
+    if (openModelRow !== "materials") setPickedMaterial(null)
+    if (openModelRow !== "bones") setPickedBone(null)
+  }, [openModelRow])
 
   // A pick belongs to the section that made it. Leaving a section with one
   // still selected would narrow the overlay the next time you open it, for a
@@ -5352,7 +5538,10 @@ export default function Lab() {
       )}
       <canvas
         ref={canvasRef}
-        onClick={pickBoneAt}
+        onClick={pickAt}
+        onDoubleClick={deselectAt}
+        onPointerMove={hoverAt}
+        onPointerLeave={clearHover}
         className={cn("absolute touch-none object-contain", !frameRect && "inset-0 h-full w-full")}
         style={frameStyle}
       />
@@ -5411,6 +5600,13 @@ export default function Lab() {
           stops a pill and a panel of different widths sitting on top of each
           other. */}
       {mounted && (
+        <>
+        {/* Centred independently of the two side pills — it does not take part
+            in their flex row, so a wider search bar or a longer model name
+            never pushes it off centre. */}
+        <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2">
+          <ModeToolbar mode={openModelRow} onPick={setOpenModelRow} />
+        </div>
         <div className="pointer-events-none absolute top-3 right-3 left-3 flex items-start gap-2">
           {/* Same 17rem as the open panel: this is a DROPDOWN, not a sidebar —
             expanding only grows downward, so nothing ever shifts sideways. */}
@@ -5533,6 +5729,7 @@ export default function Lab() {
             </div>
           </div>
         </div>
+        </>
       )}
 
       {/* Which .pmx, or why it failed — the shipped editor's dialog, reused
@@ -6345,6 +6542,17 @@ export default function Lab() {
               {Array.from({ length: pendingCast }, (_, i) => (
                 <CastRowSkeleton key={`pending-${i}`} />
               ))}
+              {/* The file's own description, right under the row it describes
+                  rather than behind a section — it is a fact about the model,
+                  not a category of edit. Only once a document is actually
+                  loaded: an empty cast has no comment field to show. */}
+              {pmxDoc && (
+                <ModelDescription
+                  value={pmxDoc.comment}
+                  placeholder={t.lab.modelDescription}
+                  onCommit={(v) => editModelInfo({ comment: v })}
+                />
+              )}
               {/* Always standing, under the rows. It was a hover-only + on the
                   group label back when one model was the normal scene; a cast is
                   something people keep adding to, and the button you use again
@@ -6367,6 +6575,7 @@ export default function Lab() {
                       empty={t.lab.noModel}
                       picked={pickedMaterial}
                       onPick={setPickedMaterial}
+                      onHover={hoverMaterialRow}
                     />
                   ) : row.id === "bones" ? (
                     <ItemPicker
