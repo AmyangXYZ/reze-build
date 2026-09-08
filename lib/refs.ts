@@ -6,7 +6,7 @@
 // genuinely is no longer that item, so it must travel by value. No provenance
 // state to keep in sync, and no way for a stale tag to mispin someone else's work.
 
-import { DEFAULT_GRAPH, type ShaderGraph } from "reze-engine"
+import type { ShaderGraph } from "reze-engine"
 import { EFFECTS } from "@/lib/effects"
 import { GRADE_PRESETS, type GradeSpec } from "@/lib/grade"
 import { GRAPH_LIBRARY, sameGraphLook } from "@/lib/materials"
@@ -46,48 +46,4 @@ export function effectRef(wgsl: string): ItemRef | undefined {
 export function gradeRef(spec: GradeSpec): ItemRef | undefined {
   const json = JSON.stringify(spec)
   return pin(candidates<GradeItem>("grade", GRADE_PRESETS).find((i) => JSON.stringify(i.payload.spec) === json))
-}
-
-/** What a scene uses that exists in no library — built-in or published. */
-export type UnpublishedUse = { kind: LibraryKind; name: string }
-
-/**
- * Everything in a scene that would have to travel by value because it matches
- * nothing published.
- *
- * Publishing is blocked on this being empty. A scene renders fine either way —
- * inlined values are exactly what makes a published scene reproduce on someone
- * else's machine — but a look that reaches the world only inside a scene is a
- * look nobody can find, credit, or reuse. Requiring it to be published first is
- * what keeps the library a complete account of what people are actually using.
- */
-export function unpublishedUses(scene: {
-  gradeSpec: GradeSpec
-  gradeName: string
-  /** EVERY applied effect. A scene layers several, and checking only the first
-   *  would let the other three publish as pins to drafts that exist on one
-   *  device. */
-  effects: { name: string; wgsl: string }[]
-  groups: Record<string, { graph?: ShaderGraph }[]>
-}): UnpublishedUse[] {
-  const out: UnpublishedUse[] = []
-  if (!gradeRef(scene.gradeSpec)) out.push({ kind: "grade", name: scene.gradeName })
-  for (const e of scene.effects) if (!effectRef(e.wgsl)) out.push({ kind: "effect", name: e.name })
-  const seen = new Set<string>()
-  for (const list of Object.values(scene.groups)) {
-    for (const g of list) {
-      if (!g.graph || graphRef(g.graph)) continue
-      // The engine's neutral base is not a draft. It is what every new group
-      // starts on and what an ungrouped material already renders, so it travels
-      // by value and reproduces anywhere — it is simply not IN the library, and
-      // blocking a publish over it would name a built-in as someone's unshared
-      // work.
-      if (sameGraphLook(g.graph, DEFAULT_GRAPH)) continue
-      // One entry per look, however many groups wear it.
-      if (seen.has(g.graph.name)) continue
-      seen.add(g.graph.name)
-      out.push({ kind: "graph", name: g.graph.name })
-    }
-  }
-  return out
 }

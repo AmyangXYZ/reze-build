@@ -9,7 +9,7 @@
 // chrome on the document's identity row.
 
 import { useRef, useState, type ReactNode } from "react"
-import { ArrowDownToLine, ArrowUpFromLine, FilePlus2, GalleryThumbnails, RotateCcw } from "lucide-react"
+import { ArrowDownToLine, ArrowUpFromLine, FilePlus2, RotateCcw } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useT } from "@/lib/i18n"
 
@@ -36,9 +36,6 @@ function Row({
 
 export type SceneMenuHandlers = {
   onNew: () => void
-  /** Browse published scenes. Optional — a host without the gallery hides the
-   *  row rather than showing a door onto nothing. */
-  onGallery?: () => void
   onExport: () => void
   /** Receives the picked file — the caller parses, so a bad file is reported through
    *  the same notice the rest of the scene's file failures use. */
@@ -47,7 +44,7 @@ export type SceneMenuHandlers = {
 }
 
 /** Wraps `trigger` (the logo, in either of its homes) as the opener of the scene menu. */
-export function SceneFileMenu({ trigger, onNew, onGallery, onExport, onImport, onReset }: SceneMenuHandlers & { trigger: ReactNode }) {
+export function SceneFileMenu({ trigger, onNew, onExport, onImport, onReset }: SceneMenuHandlers & { trigger: ReactNode }) {
   const t = useT()
   const [open, setOpen] = useState(false)
   // The tooltip is CONTROLLED so the menu can veto it. Uncontrolled, the hover
@@ -102,16 +99,6 @@ export function SceneFileMenu({ trigger, onNew, onGallery, onExport, onImport, o
           <Row icon={ArrowUpFromLine} label={t.sceneFile.export} onClick={run(onExport)} />
           <Row icon={ArrowDownToLine} label={t.sceneFile.import} onClick={pickFile} />
           <Row icon={RotateCcw} label={t.sceneFile.reset} onClick={run(onReset)} />
-          {/* Its own section, under a rule. Everything above acts on the scene
-              you are in — makes one, writes it out, reads one in, puts it back.
-              This one LEAVES it for someone else's, which is a different kind of
-              act and should not read as the fifth thing you can do to your own
-              document. Last, where a menu keeps the way out. */}
-          {onGallery && (
-            <div className="mt-1 border-t border-white/10 pt-1">
-              <Row icon={GalleryThumbnails} label={t.gallery.door} onClick={run(onGallery)} />
-            </div>
-          )}
         </PopoverContent>
       </Popover>
     </>
