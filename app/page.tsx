@@ -2796,8 +2796,25 @@ export default function Lab() {
     void (async () => {
       try {
         const entry = scene.assets.models.find((m) => m.model.id === castEntry?.id)
-        const url = entry ? modelPmxUrl(entry.model) : null
-        const bytes = url ? await (await fetch(url)).arrayBuffer() : null
+        const source = entry?.model.source
+        // Three ways a model's bytes can actually be reachable, matching
+        // ModelSource: served from a folder (the boot/demo model), unpacked
+        // into the working bundle (an upload — "nothing is uploaded" means
+        // the bytes live in IndexedDB/memory, never a URL), or still a zip
+        // archive's own URL. modelPmxUrl only ever covered the first, so an
+        // uploaded model's document silently never loaded.
+        const bytes = await (async () => {
+          if (!source) return null
+          if (source.kind === "folder") {
+            const url = modelPmxUrl(entry!.model)
+            return url ? await (await fetch(url)).arrayBuffer() : null
+          }
+          if (source.kind === "bundle") {
+            const file = bundleFile(source.path)
+            return file ? await file.arrayBuffer() : null
+          }
+          return await (await fetch(source.url)).arrayBuffer()
+        })()
         if (!stale && bytes) setPmxDoc(readPmxDocument(bytes))
       } catch {
         if (!stale) setPmxDoc(null)
@@ -2806,7 +2823,7 @@ export default function Lab() {
     return () => {
       stale = true
     }
-  }, [castFile, castEntry, scene.assets.models])
+  }, [castFile, castEntry, scene.assets.models, bundleFile])
 
   // The open section IS the overlay. A section names a part of the model, and
   // the only way to see which faces a material owns or where a joint sits is on
@@ -2859,12 +2876,36 @@ export default function Lab() {
       }),
     [],
   )
+  /**
+   * The document is always written — it is what an export reads, so an edit
+   * that only reached the canvas would not ship. The canvas write is the
+   * bonus: setMaterialUniforms covers exactly the fields it can reach without
+   * a draw-list or bind-group rebuild (colour, specular, shininess), skipped
+   * entirely for a material a style group already owns — the group's compiled
+   * graph is what is actually drawn for it, and writing a buffer nothing reads
+   * would look like a silent failure rather than the honest "this material's
+   * look comes from its group" the row itself should be saying.
+   */
   const editMaterial = useCallback(
     (patch: MaterialPatch) => {
       editDoc((doc) => setMaterials(doc, { materials: [patch] }))
       if (patch.rename) setPickedMaterial(patch.rename)
+      const engine = engineRef.current
+      const grouped = (groupsByModel[castEntry?.id ?? ""] ?? []).some((g) => g.materials.includes(patch.name))
+      if (engine && castEntry && !grouped && (patch.diffuse || patch.specular || patch.specularPower !== undefined || patch.ambient)) {
+        // patch.name is the material's name BEFORE this edit — which is what the
+        // engine's own material list still has, rename or not. The engine was
+        // not told about the rename (see AGENTS.md: nothing here is an index
+        // rebuild), so looking it up by the NEW name would miss.
+        engine.setMaterialUniforms(castEntry.id, patch.name, {
+          diffuse: patch.diffuse,
+          specular: patch.specular,
+          specularPower: patch.specularPower,
+          ambient: patch.ambient,
+        })
+      }
     },
-    [editDoc],
+    [editDoc, engineRef, castEntry, groupsByModel],
   )
   const editBone = useCallback(
     (patch: BonePatch) => {
@@ -3881,6 +3922,16 @@ export default function Lab() {
   // it: three panels is where writing the rule per pair stops working.
   useDockSlot("materials", inspectedId !== null, closeMaterials)
   useDockSlot("export", exportOpen, closeExport)
+  // The PMX inspector is the column's third occupant. Without this, picking a
+  // bone or material and opening the style panel (the search palette's own
+  // "materials" command, unrelated to the dock's Materials section) stacked
+  // both in the same slot at once — which is what looked like duplicated
+  // material names: two independent lists, drawn on top of each other.
+  const closePmxInspector = useCallback(() => {
+    setPickedBone(null)
+    setPickedMaterial(null)
+  }, [])
+  useDockSlot("pmx-inspector", pickedBone !== null || pickedMaterial !== null, closePmxInspector)
 
   const openMaterials = useCallback(
     (id: string | null) => {
@@ -5795,10 +5846,7 @@ export default function Lab() {
             onEditBone={editBone}
             onEditMaterial={editMaterial}
             closeLabel={t.lab.closeMaterials}
-            onClose={() => {
-              setPickedBone(null)
-              setPickedMaterial(null)
-            }}
+            onClose={closePmxInspector}
           />
         </Surface>
       )}
