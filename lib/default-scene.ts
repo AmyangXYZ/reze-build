@@ -55,7 +55,7 @@ const EMPTY_SETTINGS: SceneDoc["settings"] = {
     follow: null,
   },
   world: { color: "#aabbd2", strength: 0.3 },
-  sun: { color: "#ffffff", strength: 2.0, azimuth: 205, elevation: 26.6 },
+  sun: { color: "#ffffff", strength: 2.0, azimuth: 180, elevation: 26.6 },
   bloom: { enabled: true, threshold: 0.5, knee: 0.5, radius: 4.0, intensity: 0.05, color: "#ffddd3" },
   dof: DEFAULT_DOF,
   outline: { enabled: true },

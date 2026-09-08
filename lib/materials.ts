@@ -34,6 +34,28 @@ export function libraryGraph(name: string): GraphItem["payload"]["graph"] | unde
 }
 
 /**
+ * Role → display name, DERIVED from the graph that fills that role.
+ *
+ * Hand-written it drifted: the engine labels an auto group `graph.name`, so a
+ * second list of names could disagree with the library about the same thing
+ * ("Skin" in one place, "Body" in the other). Deriving leaves one name per role.
+ */
+export const SLOT_LABELS = Object.fromEntries(
+  GRAPH_LIBRARY.filter((g) => g.payload.role).map((g) => [g.payload.role, g.name]),
+) as Record<MaterialPreset, string>
+
+/**
+ * What to call a style group.
+ *
+ * Auto-derived groups arrive keyed by role, so an unlabelled one would show the
+ * raw key ("body") while its graph showed the friendly name. Hand-made groups
+ * carry their own label and pass straight through.
+ */
+export function groupLabel(group: { id: string; label?: string }): string {
+  return group.label ?? SLOT_LABELS[group.id as MaterialPreset] ?? group.id
+}
+
+/**
  * Do two shader graphs describe the same LOOK?
  *
  * Not a deep equality: `name` is rewritten to the group's label on apply, and

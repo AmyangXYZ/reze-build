@@ -34,14 +34,16 @@ import {
   ArrowUpFromLine,
   Bone,
   Boxes,
-  CircleUserRound,
   Link2,
   Layers,
   Camera,
   Check,
   FilePlus2,
+  GalleryThumbnails,
   Globe,
   Grid3x3,
+  Clapperboard,
+  Code2,
   ChevronDown,
   ChevronUp,
   Contrast,
@@ -62,11 +64,13 @@ import {
   PenLine,
   RotateCcw,
   Download,
+  Share2,
   Sun,
   Video,
   Volume1,
   Volume2,
   VolumeX,
+  Workflow,
   Upload,
   Sparkles,
   Blocks,
@@ -74,14 +78,17 @@ import {
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { AccountButton, HandleDialog } from "@/components/editor/account-panel"
+import { SceneGallery, prefetchGallery } from "@/components/editor/scene-gallery"
+import { prefetchLibraryStats } from "@/hooks/use-library-stats"
 import { AnimPlayer, type Scrub } from "@/components/scene/anim-player"
+import { MaterialsPanel } from "@/components/scene/material-sidebar"
 import { GithubMark, MaterialSphereIcon } from "@/components/scene/slot-icons"
+import { RenderPanel } from "@/components/editor/render-panel"
 import { CastSwatch } from "@/components/editor/cast-swatch"
 import { CommandPalette } from "@/components/editor/command-palette"
 import { RECENT_DEPTH, type PaletteItem, type SceneGap } from "@/lib/command-search"
@@ -89,10 +96,22 @@ import { SceneFileMenu } from "@/components/editor/scene-file-menu"
 import { SceneName } from "@/components/editor/scene-name"
 import { Surface } from "@/components/editor/surface"
 import { LayerRow, StackGroup } from "@/components/editor/layer-row"
-import { ColorRow, SliderRow } from "@/components/scene/scene-sidebar"
+import {
+  ColorRow,
+  FOLLOW_BONE,
+  FOLLOW_OFFSET_DEFAULT,
+  SliderRow,
+  TARGET_DEFAULT,
+} from "@/components/scene/scene-sidebar"
 import { QuickPick } from "@/components/scene/quick-pick"
 import { VALUE_BOX } from "@/components/scene/scene-sidebar"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { GradeLibrary } from "@/components/editor/grade-library"
+import { GradeEditorPanel, type GradeEditorSubject } from "@/components/editor/grade-editor"
+import { EffectLibrary } from "@/components/editor/effect-library"
+import { NodeLibrary } from "@/components/editor/node-library"
+import { GraphEditor } from "@/components/graph/graph-editor"
+import { WgslEditorPanel } from "@/components/editor/wgsl-editor"
 import { SaveCloseDialog } from "@/components/editor/save-close"
 import { FloatingPanel, type Rect } from "@/components/editor/floating-panel"
 import { LoadingPill, useLoadingLabel } from "@/components/editor/loading-pill"
@@ -111,12 +130,14 @@ import { ClipInspector } from "@/components/scene/clip-inspector"
 import { ClipEditor, type ClipEditKind } from "@/context/clip-editor"
 import { primeClipDensity, useAudioPeaks } from "@/hooks/use-lane-graphs"
 import { useEngine, type EngineModelInfo } from "@/hooks/use-engine"
+import { useRenderFraming } from "@/hooks/use-render-framing"
 import { useSceneSync } from "@/hooks/use-scene-sync"
+import { useBrowseSurface } from "@/hooks/use-browse-surface"
 import { useStoredRect } from "@/hooks/use-stored-rect"
 import { useDockSlot } from "@/hooks/use-dock-slot"
 import { useZOrder } from "@/hooks/use-z-order"
 import { PmxInspector } from "@/components/editor/pmx-inspector"
-import { setBones, setMaterials, setModelInfo, type BonePatch, type MaterialPatch, type ModelInfoPatch } from "@/lib/pmx-edits"
+import { setBones, setMaterials, type BonePatch, type MaterialPatch } from "@/lib/pmx-edits"
 import { saveDocument } from "@/lib/document-store"
 import { DEFAULT_SCENE, DEMO_SCENE, EMPTY_SCENE } from "@/lib/default-scene"
 import {
@@ -139,24 +160,32 @@ import { collectSceneSlots as collectSlots, type CollectedAnim, type SceneSlots 
 import { downloadBlob, sceneZipFileName } from "@/lib/scene-file"
 import { buildZip } from "@/lib/bundle"
 import { resolveSceneRefs } from "@/lib/resolve-refs"
-import { effectRef, gradeRef, graphRef } from "@/lib/refs"
+import { effectRef, gradeRef, graphRef, unpublishedUses } from "@/lib/refs"
+import { ShareSceneDialog, type ScenePublishSource } from "@/components/editor/share-scene"
 import { clearLocalBundle, loadCastPalette, loadLocalBundle, saveCastPalette, saveLocalBundle } from "@/lib/asset-store"
 import { dictionaries, LOCALES, LOCALE_LABELS, useI18n, useT, type Dictionary, type Locale } from "@/lib/i18n"
 import { expandUploadFiles, unzipToFiles } from "@/lib/uploads"
-import { gradeSpec } from "@/lib/grade"
+import { GRADE_PRESETS, gradeSpec, NEUTRAL_SPEC, NEW_GRADE_SPEC, recallIntensity, rememberIntensity } from "@/lib/grade"
 import {
   communityQuickPickItems,
   nameKey,
   quickPickItems,
+  type EffectItem,
+  type GradeItem,
   type GraphItem,
   type LibraryFacet,
 } from "@/lib/library"
-import { communityItems } from "@/hooks/use-community"
+import { communityItems, useCommunity } from "@/hooks/use-community"
+import { useDrafts } from "@/hooks/use-drafts"
+import { useSession } from "@/lib/auth-client"
 import { freeName } from "@/lib/names"
-import { builtinEffect, type AppliedEffect } from "@/lib/effects"
+import { applyDefaults, EFFECTS, builtinEffect, NEW_EFFECT_TEMPLATE, type AppliedEffect } from "@/lib/effects"
+import { stripFor } from "@/lib/effect-schedule"
+import { secondsToFrames } from "@/lib/clip"
 import { BACKDROP_VIDEO_RE, probeBackdrop, releaseBackdrop, type BackdropMedia } from "@/lib/backdrop"
 import { useMediaBackdrop } from "@/hooks/use-media-backdrop"
 import { isCompositingBackground } from "@/lib/export-background"
+import type { ExportProgress } from "@/lib/video-export"
 import { castColour } from "@/lib/model-colour"
 import { castPaletteKey, castSourceFor } from "@/lib/cast-source"
 import { NEUTRAL_PALETTE, type CastPaletteId } from "@/lib/cast-palette"
@@ -167,20 +196,28 @@ import { clearForkTarget, forkTarget } from "@/lib/fork"
 import {
   activeLookPack,
   graphRole,
+  groupLabel,
   GRAPH_LIBRARY,
   libraryGraph,
   LOOK_PACK_ORDER,
   LOOK_PACKS,
   packGraph,
+  sameGraphLook,
+  SLOT_GRAPHS,
   type LookPack,
 } from "@/lib/materials"
 import { stageStyleGroups } from "@/lib/stage-style"
 import {
+  compileGraph,
   DEFAULT_GRAPH,
+  type CompileOptions,
   VMDLoader,
+  type Diagnostic,
+  type MaterialPreset,
   type ShaderGraph,
   type StyleGroup,
   parseLRC,
+  parseDirectives,
   readPmxDocument,
   type PmxDocument,
 } from "reze-engine"
@@ -457,6 +494,16 @@ const FRAME_ASPECT_TOL = 1.03
 const RECENTS_KEY = storageKey("palette-recents")
 
 /**
+ * Whether this person has ever opened the gallery.
+ *
+ * Persisted, unlike every other suggestion signal, because it is a fact about
+ * THEM rather than about the scene: the point of offering it is that someone who
+ * has not found the gallery has no way to know it exists, and a reminder that
+ * resets every session is a reminder that never stops.
+ */
+const GALLERY_SEEN_KEY = storageKey("gallerySeen")
+
+/**
  * Whether the left dock is open.
  *
  * The ROOT toggle only — which rows inside it are open stays per-session, because
@@ -534,7 +581,7 @@ const otherThan = (t: Dictionary): Dictionary => (t === dictionaries.zh ? dictio
  *  document and the libraries; the shell only needs them to have names. */
 const MODEL_ROWS = [
   { id: "bones", name: "Bones", icon: Bone, count: (d: PmxDocument) => d.bones.length },
-  { id: "materials", name: "Materials", icon: MaterialSphereIcon, count: (d: PmxDocument) => d.materials.length },
+  { id: "materials", name: "Materials", icon: Palette, count: (d: PmxDocument) => d.materials.length },
   { id: "morphs", name: "Morphs", icon: Smile, count: (d: PmxDocument) => d.morphs.length },
   { id: "rigidbodies", name: "Rigidbodies", icon: Boxes, count: (d: PmxDocument) => d.rigidbodies.length },
   { id: "joints", name: "Joints", icon: Link2, count: (d: PmxDocument) => d.joints.length },
@@ -559,24 +606,12 @@ function ItemPicker({
   empty,
   picked,
   onPick,
-  onHover,
 }: {
   items: { name: string }[]
   empty: string
   picked: string | null
   onPick: (name: string | null) => void
-  /** The list's own hover, mirroring the viewport's — a preview of the pick,
-   *  not a pick. Optional: only Materials has an overlay to preview against. */
-  onHover?: (name: string | null) => void
 }) {
-  // A pick can arrive from the viewport, off-screen from wherever the list
-  // happens to be scrolled — the row is what confirms what you clicked, and a
-  // confirmation you cannot see is not one.
-  const pickedRef = useRef<HTMLButtonElement | null>(null)
-  useEffect(() => {
-    pickedRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" })
-  }, [picked])
-
   if (items.length === 0) return <p>{empty}</p>
   return (
     // Capped and scrolling: a model with sixty materials would otherwise push
@@ -585,10 +620,7 @@ function ItemPicker({
       {items.map((m, i) => (
         <button
           key={m.name + "#" + i}
-          ref={picked === m.name ? pickedRef : undefined}
           onClick={() => onPick(picked === m.name ? null : m.name)}
-          onMouseEnter={() => onHover?.(m.name)}
-          onMouseLeave={() => onHover?.(null)}
           className={cn(
             "group/item flex h-6 w-full items-center gap-1.5 rounded pr-0.5 pl-1 text-left",
             picked === m.name ? "bg-blue-400/15" : "hover:bg-white/[0.05]",
@@ -611,141 +643,6 @@ function ItemPicker({
   )
 }
 
-/**
- * The model's own description — the PMX header's comment field, straight
- * under the cast row it belongs to rather than tucked inside a section: it is
- * a fact about the FILE, not a category of edit like Bones or Materials.
- *
- * Commits on blur only, no Enter — Enter has to stay a newline in a
- * multi-line field. Escape reverts, same as the inspector's single-line
- * fields, for the same reason: a half-typed paragraph abandoned by clicking
- * elsewhere should not overwrite what was there.
- */
-function ModelDescription({ value, placeholder, onCommit }: { value: string; placeholder: string; onCommit: (v: string) => void }) {
-  const [draft, setDraft] = useState(value)
-  const [editing, setEditing] = useState(false)
-  if (!editing && draft !== value) setDraft(value)
-  return (
-    // Indented to the NAME column, not the row's own left edge — an empty
-    // swatch-width spacer stands in for the swatch so the box lines up under
-    // the text it describes rather than under the whole row.
-    <div className="flex items-start gap-2.5 px-4 pt-0.5 pb-2">
-      <span className="size-5 shrink-0" aria-hidden />
-      <Textarea
-        value={draft}
-        placeholder={placeholder}
-        onChange={(e) => setDraft(e.target.value)}
-        onFocus={() => setEditing(true)}
-        onBlur={() => {
-          setEditing(false)
-          if (draft !== value) onCommit(draft)
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            setDraft(value)
-            setEditing(false)
-            e.currentTarget.blur()
-          }
-        }}
-        className="min-h-14 min-w-0 flex-1 rounded-interior border-line-strong bg-transparent px-2.5 py-1.5 text-xs shadow-none md:text-xs"
-      />
-    </div>
-  )
-}
-
-/**
- * Which part of the model a click in the viewport means, as three buttons
- * instead of a dock section you have to go find. It drives the SAME state the
- * dock's own rows do — openModelRow — so there is one mode, not two synced
- * copies of it: opening Bones from here is opening Bones, full stop.
- *
- * Only the modes that actually do something. Morphs and Faces are not
- * editable yet (see MODEL_ROWS) — a button for a mode nothing happens in is
- * worse than no button, since clicking it and watching nothing change reads
- * as broken rather than as unbuilt.
- */
-function ModeToolbar({
-  mode,
-  onPick,
-}: {
-  mode: string | null
-  onPick: (mode: string | null) => void
-}) {
-  const modes: { id: string | null; icon: ComponentType<{ className?: string }>; label: string }[] = [
-    { id: null, icon: Camera, label: "Camera" },
-    { id: "bones", icon: Bone, label: "Bones" },
-    { id: "materials", icon: MaterialSphereIcon, label: "Materials" },
-  ]
-  return (
-    <div className={cn(PILL, "pointer-events-auto flex h-10 items-center gap-0.5 p-1")}>
-      {modes.map(({ id, icon: Icon, label }) => (
-        <Tooltip key={label}>
-          <TooltipTrigger asChild>
-            <button
-              aria-pressed={mode === id}
-              aria-label={label}
-              onClick={() => onPick(id)}
-              className={cn(
-                "flex size-7 items-center justify-center rounded-lg transition-colors",
-                mode === id ? "bg-blue-400/15 text-blue-400" : "text-muted-foreground hover:bg-white/5 hover:text-foreground",
-              )}
-            >
-              <Icon className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>{label}</TooltipContent>
-        </Tooltip>
-      ))}
-    </div>
-  )
-}
-
-/** A placeholder for the account door — no sign-in wired up yet, just the
- *  slot it will live in. */
-function AccountPlaceholder() {
-  const t = useT()
-  const [open, setOpen] = useState(false)
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverAnchor asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setOpen(true)}
-          className="size-7 rounded-md hover:bg-white/5 hover:text-foreground"
-          aria-label={t.account.label}
-        >
-          <CircleUserRound className="size-4" />
-        </Button>
-      </PopoverAnchor>
-      <PopoverContent side="bottom" align="center" sideOffset={8} className="w-56 border-white/10 bg-zinc-950/95 p-3">
-        <p className="text-xs leading-relaxed text-muted-foreground">{t.account.comingSoon}</p>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-/** A placeholder for publishing — the dialog it will open in, with the one
- *  action that matters left disabled until sharing a model is actually built. */
-function DummyPublishDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const t = useT()
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[22rem] gap-0 border-white/10 bg-zinc-950/95 p-5 sm:max-w-[22rem]">
-        <DialogHeader>
-          <DialogTitle className="text-sm font-medium">{t.share.title}</DialogTitle>
-          <DialogDescription className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-            {t.share.comingSoon}
-          </DialogDescription>
-        </DialogHeader>
-        <Button disabled className="mt-4 h-8 w-full text-xs">
-          {t.share.publish}
-        </Button>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 function layersFor(t: Dictionary) {
   return [
     // "Environment", not "Stage": the row holds Stage | Ground | Background, and
@@ -754,7 +651,6 @@ function layersFor(t: Dictionary) {
     // A lamp, not the sun: Sun is the SUN — one of the two things this row
     // holds, and a row wearing the icon of its own tab claims to be that tab.
     { id: "light", name: t.lab.rows.light, icon: Lightbulb, presets: [] },
-    { id: "camera", name: t.lab.rows.camera, icon: Camera, presets: [] },
     { id: "physics", name: t.lab.rows.physics, icon: Atom, presets: [] },
   ] as const
 }
@@ -787,6 +683,9 @@ type PaletteValues = {
   locale: Locale
   /** The loaded stage's placement, or null when there is none. */
   stage: { scale: number; position: [number, number, number] } | null
+  /** Applied names, already resolved — a value function must not have to look
+   *  anything up. */
+  effect: string | null
   /** What the Planes row wears: the one card's name, or how many. */
   planes: string | null
   gradeName: string
@@ -833,7 +732,8 @@ const DOCK_CONTROLS: {
   row: string
   stageTab?: "stage" | "ground" | "background"
   lightTab?: "world" | "sun"
-  postTab?: "tone" | "bloom" | "outline"
+  cameraTab?: "lens" | "focus"
+  postTab?: "grade" | "tone" | "bloom" | "outline"
   keywords?: string[]
   /** What this control is set to, for the right end of its palette row. Omitted
    *  where there is nothing honest to print — the export panel owns its own
@@ -841,11 +741,13 @@ const DOCK_CONTROLS: {
    *  thing dynamically: a stage transform with no stage loaded. */
   value?: (v: PaletteValues) => string
 }[] = [
-  { id: "camera-fov", en: "Camera FOV", zh: "相机视场角", row: "camera", keywords: ["fov", "field of view", "视野"], value: (v) => deg(rad2deg(v.camera.fov ?? CAMERA_DEFAULT_FOV)) },
-  { id: "camera-distance", en: "Camera distance", zh: "相机距离", row: "camera", keywords: ["zoom", "距离"], value: (v) => dec1(v.camera.distance) },
-  { id: "camera-azimuth", en: "Camera azimuth", zh: "相机方位角", row: "camera", keywords: ["orbit", "angle", "方位"], value: (v) => deg(rad2deg(v.camera.alpha)) },
-  { id: "camera-elevation", en: "Camera elevation", zh: "相机仰角", row: "camera", keywords: ["orbit", "height", "俯仰"], value: (v) => deg(90 - rad2deg(v.camera.beta)) },
-  { id: "camera-target", en: "Camera target", zh: "相机目标", row: "camera", keywords: ["offset", "look at", "偏移"], value: (v) => xyz(v.camera.target) },
+  { id: "camera-fov", en: "Camera FOV", zh: "相机视场角", row: "camera", cameraTab: "lens", keywords: ["fov", "field of view", "视野"], value: (v) => deg(rad2deg(v.camera.fov ?? CAMERA_DEFAULT_FOV)) },
+  { id: "camera-follow", en: "Follow character", zh: "跟随角色", row: "camera", cameraTab: "lens", keywords: ["follow", "center", "センター"], value: (v) => sw(!!v.camera.follow, v.t) },
+  { id: "camera-distance", en: "Camera distance", zh: "相机距离", row: "camera", cameraTab: "lens", keywords: ["zoom", "距离"], value: (v) => dec1(v.camera.distance) },
+  { id: "camera-azimuth", en: "Camera azimuth", zh: "相机方位角", row: "camera", cameraTab: "lens", keywords: ["orbit", "angle", "方位"], value: (v) => deg(rad2deg(v.camera.alpha)) },
+  { id: "camera-elevation", en: "Camera elevation", zh: "相机仰角", row: "camera", cameraTab: "lens", keywords: ["orbit", "height", "俯仰"], value: (v) => deg(90 - rad2deg(v.camera.beta)) },
+  { id: "camera-target", en: "Camera target", zh: "相机目标", row: "camera", cameraTab: "lens", keywords: ["offset", "look at", "偏移"], value: (v) => xyz(v.camera.target) },
+  { id: "camera-dof", en: "Depth of field", zh: "景深", row: "camera", cameraTab: "focus", keywords: ["dof", "bokeh", "blur", "focus", "虚化"], value: (v) => sw(v.settings.dof.enabled, v.t) },
   { id: "stage-scale", en: "Stage scale", zh: "舞台缩放", row: "stage", stageTab: "stage", value: (v) => (v.stage ? `${dec2(v.stage.scale)}×` : "") },
   { id: "stage-position", en: "Stage position", zh: "舞台位置", row: "stage", stageTab: "stage", value: (v) => (v.stage ? xyz(v.stage.position) : "") },
   { id: "ground-color", en: "Ground color", zh: "地面颜色", row: "stage", stageTab: "ground", value: (v) => v.settings.ground.color },
@@ -859,7 +761,10 @@ const DOCK_CONTROLS: {
   // "lighting" and "environment" when they want an HDRI, and for "hdr" when
   // they have the file in hand.
   { id: "bg-world", en: "World (HDRI)", zh: "世界（HDRI）", row: "stage", stageTab: "background", keywords: ["hdr", "hdri", "ibl", "environment", "lighting", "sky", "光照", "环境", "天空"], value: (v) => v.hdri ?? v.t.lab.ctl.none },
+  { id: "effect", en: "Effect", zh: "特效", row: "effect", keywords: ["wgsl", "stars", "shader", "influence", "opacity", "blend", "fade", "背景特效", "影响", "过渡"], value: (v) => v.effect ?? v.t.lab.ctl.none },
   { id: "plane", en: "Planes", zh: "平面", row: "plane", keywords: ["card", "layer", "image", "video", "mp4", "gif", "板ポリ", "图层"], value: (v) => v.planes ?? v.t.lab.ctl.none },
+  { id: "grade-preset", en: "Grade preset", zh: "调色预设", row: "post", postTab: "grade", keywords: ["color", "look", "后期"], value: (v) => v.gradeName },
+  { id: "grade-intensity", en: "Grade intensity", zh: "调色强度", row: "post", postTab: "grade", value: (v) => dec2(v.settings.grade.intensity) },
   { id: "view-transform", en: "View transform", zh: "视图变换", row: "post", postTab: "tone", keywords: ["tonemap", "tone map", "filmic", "agx", "standard", "color management", "色调映射", "色彩管理"], value: (v) => TRANSFORM_LABEL[v.settings.view.transform] },
   { id: "exposure", en: "Exposure", zh: "曝光", row: "post", postTab: "tone", keywords: ["brightness", "ev", "亮度"], value: (v) => dec2(v.settings.view.exposure) },
   { id: "bloom-intensity", en: "Bloom intensity", zh: "泛光强度", row: "post", postTab: "bloom", keywords: ["glow", "辉光"], value: (v) => v.settings.bloom.intensity.toFixed(3) },
@@ -870,6 +775,14 @@ const DOCK_CONTROLS: {
   { id: "sun-strength", en: "Sun strength", zh: "太阳强度", row: "light", lightTab: "sun", value: (v) => dec2(v.settings.sun.strength) },
   { id: "sun-azimuth", en: "Sun azimuth", zh: "太阳方位", row: "light", lightTab: "sun", value: (v) => deg(v.settings.sun.azimuth) },
   { id: "sun-elevation", en: "Sun elevation", zh: "太阳高度", row: "light", lightTab: "sun", value: (v) => deg(v.settings.sun.elevation) },
+  { id: "resolution", en: "Resolution", zh: "分辨率", row: "export", keywords: ["1080", "4k", "size", "quality"] },
+  { id: "aspect", en: "Aspect ratio", zh: "画面比例", row: "export", keywords: ["16:9", "9:16", "square", "vertical"] },
+  { id: "duration", en: "Export duration", zh: "导出时长", row: "export", keywords: ["length", "range", "seconds"] },
+  { id: "green-screen", en: "Green screen", zh: "绿幕", row: "export", keywords: ["chroma", "key", "transparent", "抠像"] },
+  { id: "watermark", en: "Watermark", zh: "水印", row: "export", keywords: ["logo", "brand"] },
+  // "after effects" and "composite" are what someone is thinking when they want
+  // this; "jsx" and "camera" are what they will type once they know it exists.
+  { id: "ae-script", en: "AE composition script", zh: "AE 合成脚本", row: "export", keywords: ["after effects", "jsx", "composite", "camera", "null", "3d", "合成", "摄像机", "空对象"] },
   { id: "gravity", en: "Gravity", zh: "重力", row: "physics", value: (v) => v.settings.physics.gravity.toFixed(0) },
   { id: "ground-collision", en: "Ground collision", zh: "地面碰撞", row: "physics", keywords: ["floor", "cloth", "hair", "skirt", "through", "stage", "flying", "地面", "碰撞", "穿模", "浮空"], value: (v) => sw(v.settings.physics.floor, v.t) },
   { id: "wind", en: "Wind", zh: "风", row: "physics", value: (v) => v.settings.physics.wind.toFixed(0) },
@@ -885,10 +798,13 @@ function rowMetaFor(t: Dictionary): Record<string, { icon: ComponentType<{ class
   return {
     camera: { icon: Camera, name: t.lab.rows.camera },
     stage: { icon: Mountain, name: t.lab.rows.stage },
+    effect: { icon: Sparkles, name: t.lab.rows.effect },
     plane: { icon: Image, name: t.lab.rows.plane },
     post: { icon: Contrast, name: t.lab.rows.post },
     light: { icon: Lightbulb, name: t.lab.rows.light },
     physics: { icon: Atom, name: t.lab.rows.physics },
+    // Not a dock row — a summoned panel. Its controls are searchable all the same.
+    export: { icon: Clapperboard, name: t.lab.rows.export },
   }
 }
 function tabNameFor(t: Dictionary): Record<string, string> {
@@ -945,6 +861,136 @@ function commandsFor(t: Dictionary): PaletteItem[] {
   const l = t.lab
   const alt = otherThan(t).lab
   return [
+    // Three honest pairs: a NEW command starts a draft from a template, a
+    // LIBRARY command browses. Neither needs a subject, which is why neither can
+    // guess wrong. There is deliberately no "edit shader graph" — a scene has as
+    // many graphs as it has groups, so choosing one is the materials panel's job,
+    // not a command's.
+    {
+      id: "graph-new",
+      suggested: true,
+      repeatable: true,
+      // Where it LANDED, then who else can have it. A graph you just wrote is in
+      // the library under a name you have not seen yet, and publishing is what
+      // turns it from a local draft into something a scene can pin.
+      nextLikely: ["graph-lib", "publish", "materials"],
+      section: "command",
+      deep: true,
+      icon: Workflow,
+      label: l.cmd.graphNew,
+      altLabels: [alt.cmd.graphNew],
+      // NOT "wgsl". A graph compiles TO WGSL, but the person who types it wants
+      // the editor they can write it in — which is wgsl-new, one entry below.
+      // Claiming the word here is what sent them to the node canvas instead.
+      keywords: [...MAKE, "material", "node", "shader", "着色器"],
+    },
+    {
+      id: "graph-lib",
+      repeatable: true,
+      section: "command",
+      icon: Workflow,
+      label: l.cmd.graphLib,
+      altLabels: [alt.cmd.graphLib],
+      keywords: ["shader", "browse", "着色器", "库"],
+    },
+    {
+      id: "wgsl-new",
+      repeatable: true,
+      nextLikely: ["effect-lib", "publish", "export"],
+      section: "command",
+      deep: true,
+      icon: Code2,
+      label: l.cmd.wgslNew,
+      altLabels: [alt.cmd.wgslNew],
+      keywords: [...MAKE, "wgsl", "shader", "effect", "background", "特效"],
+    },
+    {
+      id: "effect-lib",
+      repeatable: true,
+      section: "command",
+      icon: Sparkles,
+      label: l.cmd.effectLib,
+      altLabels: [alt.cmd.effectLib],
+      keywords: ["background", "wgsl", "browse", "特效", "库"],
+    },
+    {
+      id: "grade-new",
+      repeatable: true,
+      nextLikely: ["grade-lib", "publish"],
+      section: "command",
+      deep: true,
+      icon: Palette,
+      label: l.cmd.gradeNew,
+      altLabels: [alt.cmd.gradeNew],
+      keywords: [...MAKE, "color", "look", "调色"],
+    },
+    {
+      id: "grade-lib",
+      repeatable: true,
+      section: "command",
+      icon: Palette,
+      label: l.cmd.gradeLib,
+      altLabels: [alt.cmd.gradeLib],
+      keywords: ["color", "browse", "调色", "库"],
+    },
+    {
+      id: "export",
+      // No `suggested` — the SCENE says when this matters. It rises once there
+      // is something watchable and stops the moment you have rendered it.
+      fills: "render",
+      nextLikely: ["publish"],
+      section: "command",
+      icon: Clapperboard,
+      label: l.cmd.exportVideo,
+      // No hint: the resolution lives in the export panel and changes there, so
+      // a number printed here is one nobody updated. A hint that can be wrong is
+      // worse than a row with nothing to add.
+      altLabels: [alt.cmd.exportVideo],
+      keywords: [
+        ...SAVE,
+        "mp4",
+        "webm",
+        "4k",
+        "render",
+        "encode",
+        // The transparent lane, by every name someone reaches for it under.
+        // None of these matched before it existed, so the feature was in the
+        // panel and nowhere in the palette.
+        "alpha",
+        "transparent",
+        "png",
+        "sequence",
+        "green screen",
+        "透明",
+        "序列",
+        "绿幕",
+      ],
+    },
+    // Not a goto — goto means a place in the dock. This LEAVES what you are
+    // making to look at what other people made, which is why it never became a
+    // library tab either.
+    {
+      id: "gallery",
+      // Offered while you have no history of your own: someone who has done
+      // nothing yet is exactly who needs to see that other people's scenes
+      // exist. It stops being offered the moment they have.
+      fills: "discover",
+      repeatable: true,
+      section: "command",
+      icon: GalleryThumbnails,
+      label: t.gallery.door,
+      altLabels: [otherThan(t).gallery.door, t.gallery.title, otherThan(t).gallery.title],
+      keywords: ["browse", "explore", "discover", "scenes", "community", "浏览", "发现", "场景", "作品"],
+    },
+    {
+      id: "publish",
+      suggested: true,
+      section: "command",
+      icon: Share2,
+      label: l.cmd.publish,
+      altLabels: [alt.cmd.publish],
+      keywords: ["share", "upload", "link", "url", "发布", "分享", "链接"],
+    },
     // The logo menu's four operations, searchable. Same handlers, same labels —
     // a second door to one function, which is the whole point of the palette.
     {
@@ -986,7 +1032,7 @@ function commandsFor(t: Dictionary): PaletteItem[] {
     {
       id: "upload-animation",
       fills: "motion",
-      nextLikely: ["camera"],
+      nextLikely: ["camera", "export"],
       repeatable: true,
       section: "command",
       // A BODY performing, not a film slate: Clapperboard is the rendered video,
@@ -1075,14 +1121,23 @@ function commandsFor(t: Dictionary): PaletteItem[] {
       keywords: ["plane", "card", "layer", "image", "video", "mp4", "gif", "webp", "板ポリ", "平面", "图层", "视频"],
     },
     {
+      id: "effect",
+      repeatable: true,
+      section: "goto",
+      icon: Sparkles,
+      label: l.cmd.effect,
+      altLabels: [alt.cmd.effect],
+      keywords: ["wgsl", "stars", "shader"],
+    },
+    {
       id: "post",
       repeatable: true,
-      nextLikely: [],
+      nextLikely: ["export"],
       section: "goto",
       icon: Contrast,
       label: l.cmd.post,
       altLabels: [alt.cmd.post],
-      keywords: ["color", "bloom", "glow", "泛光"],
+      keywords: ["grade", "color", "调色", "bloom", "glow", "泛光"],
     },
     {
       id: "light",
@@ -1123,6 +1178,25 @@ function commandsFor(t: Dictionary): PaletteItem[] {
       altLabels: [alt.cmd.physics],
       keywords: ["gravity", "wind", "重力", "风"],
     },
+    // A command, not a goto: it opens a panel to work in, the way Export does —
+    // the goto section is for places in the dock.
+    {
+      id: "materials",
+      // The palette is materials' only door — the cast row deliberately does not
+      // open it — so the row has to be there without typing, not just findable.
+      suggested: "key",
+      // Rises to the TOP the moment something is uploaded — a fresh model wears
+      // an auto-grouping nobody chose, and the look is the first thing anyone
+      // changes. Falls back to its standing slot once you have opened it.
+      fills: "look",
+      nextLikely: ["look", "export", "publish"],
+      repeatable: true,
+      section: "command",
+      icon: MaterialSphereIcon,
+      label: l.editMaterials,
+      altLabels: [alt.editMaterials],
+      keywords: ["style groups", "shader", "look", "材质", "材料"],
+    },
     // The cast/clips GROUPS left the palette — they never collapse, so "go to"
     // them means nothing. Their actions did not: these are the functions those
     // rows run, reachable without knowing where the row is.
@@ -1153,7 +1227,7 @@ function commandsFor(t: Dictionary): PaletteItem[] {
     {
       id: "upload-music",
       fills: "music",
-      nextLikely: [],
+      nextLikely: ["export"],
       repeatable: true,
       section: "command",
       icon: Music,
@@ -1161,9 +1235,12 @@ function commandsFor(t: Dictionary): PaletteItem[] {
       altLabels: [alt.uploadMusic],
       keywords: [...LOAD, "audio", "bgm", "wav", "mp3", "音乐"],
     },
+    // The track's companions. Both point at `effect` next, because that is what
+    // they are FOR: notes and words are data nothing draws until an effect
+    // reads them, and a scene that loads one and stops shows nothing new.
     {
       id: "upload-midi",
-      nextLikely: [],
+      nextLikely: ["effect"],
       repeatable: true,
       section: "command",
       icon: ListMusic,
@@ -1173,7 +1250,7 @@ function commandsFor(t: Dictionary): PaletteItem[] {
     },
     {
       id: "upload-lyrics",
-      nextLikely: [],
+      nextLikely: ["effect"],
       repeatable: true,
       section: "command",
       icon: Captions,
@@ -1247,9 +1324,9 @@ function commandsFor(t: Dictionary): PaletteItem[] {
     // character's expressions" are different intents: the second names the
     // track it wants, and arriving already pointed at it is most of the value.
     // Each has an unambiguous subject by RULE — the model being edited, else the
-    // first of the cast — which is the same rule the clip rows' own edit
-    // buttons resolve through, never an inspection of what happens to be
-    // selected.
+    // inspected one, else the first of the cast — which is the same rule the
+    // clip rows' own edit buttons resolve through, never an inspection of what
+    // happens to be selected.
     {
       id: "timeline",
       repeatable: true,
@@ -1301,7 +1378,7 @@ function commandsFor(t: Dictionary): PaletteItem[] {
       // model wears a look nobody chose, and a whole-scene style is the fastest
       // way to a deliberate one.
       fills: "look",
-      nextLikely: ["materials"],
+      nextLikely: ["materials", "export"],
       repeatable: true,
       section: "command",
       icon: Sparkles,
@@ -1415,11 +1492,12 @@ function draftOriginOf(community: { id: string; mine: boolean }[], editedId: str
   return hit.mine ? { sourceId: hit.id } : { forkedFromId: hit.id }
 }
 
-// Where the floating editors sit, remembered across sessions. The SAME
+// Where the three floating editors sit, remembered across sessions. The SAME
 // keys the shipped editor writes: it is one panel per kind, and dragging the
 // node editor somewhere on one route only to find it back in the middle on the
 // other would be the layout forgetting something it plainly knows.
 const GRAPH_PANEL_KEY = storageKey("graphPanel")
+const GRADE_PANEL_KEY = storageKey("gradePanel")
 const WGSL_PANEL_KEY = storageKey("wgslPanel")
 
 /** First-open default: bottom-centred, clear of both docks and the transport. */
@@ -1892,6 +1970,9 @@ export default function Lab() {
     setCameraView,
     swapScene,
     applyGroups,
+    upsertGroup,
+    highlight,
+    toggleVisible,
   } = useEngine(scene)
   // No byte stats here. The editor's scene comes out of IndexedDB or off the
   // local disk in almost every case, so a download line would be a phase the
@@ -2181,6 +2262,86 @@ export default function Lab() {
     return () => clearInterval(timer)
   }, [durationOwner, masterId, engineRef])
 
+  // Export framing: letterbox preview, green screen, exporting — the shared
+  // hook, because an export in flight must survive whatever the chrome does.
+  const framing = useRenderFraming()
+  const [exportOpen, setExportOpen] = useState(false)
+  /**
+   * Bumped every time a right panel is SUMMONED, which is what raises it.
+   *
+   * The newest window goes to the front — desktop's oldest rule, and the one
+   * useZOrder already applies on mount. Two panels here do not mount when they
+   * open, so they never got it: export is mounted while closed (a render in
+   * flight must survive its panel being hidden) and so it only ever raised at
+   * boot, and the inspector, already open on one model, does not remount when
+   * you summon it again. Both surfaced UNDER a library or an editor opened
+   * since.
+   */
+  const [exportRaise, setExportRaise] = useState(0)
+  // The Escape closer only while OPEN: registered permanently, a hidden panel
+  // sitting at the top of the stack ate the key that should have closed the
+  // library underneath it.
+  const exportZ = useZOrder(exportRaise, exportOpen ? () => setExportOpen(false) : undefined)
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null)
+  const exportPct =
+    exportProgress && exportProgress.total > 0
+      ? Math.round((exportProgress.frame / exportProgress.total) * 100)
+      : null
+
+  /**
+   * The framed rectangle, in CSS pixels — and while it exists, it is WHERE THE
+   * CANVAS IS.
+   *
+   * It used to be a scrim: the canvas stayed full-bleed, four black bars dimmed
+   * the parts that would not be exported, and only a frame WIDER than the
+   * window resized the render. So picking 9:16 left you composing on a 16:9
+   * canvas with a tall box drawn on it — the shot inside that box was never
+   * actually rendered at 9:16, and everything that reads the frame's aspect
+   * (an overlay sizing itself against rzResolution, the depth of field, the
+   * bloom radius) was answering for the wrong shape.
+   *
+   * Now the canvas becomes the box. What you are looking at IS the export,
+   * at the export's aspect, and the area around it is simply the editor.
+   */
+  const frameRect =
+    framing.activeFrame && framing.frameVp
+      ? (() => {
+          const va = framing.frameVp.w / framing.frameVp.h
+          const a = framing.activeFrame.aspect
+          // Within a hair of the window's own shape, take the whole window:
+          // shrinking the canvas by a percent to honour a rounding difference
+          // costs pixels and buys nothing anybody can see.
+          if (a <= va * FRAME_ASPECT_TOL && a >= va / FRAME_ASPECT_TOL)
+            return { x: 0, y: 0, w: framing.frameVp.w, h: framing.frameVp.h }
+          const w = a < va ? framing.frameVp.h * a : framing.frameVp.w
+          const h = a < va ? framing.frameVp.h : framing.frameVp.w / a
+          return { x: (framing.frameVp.w - w) / 2, y: (framing.frameVp.h - h) / 2, w, h }
+        })()
+      : null
+  /** The rect as a style, for the two full-bleed layers that must follow it —
+   *  the canvas and the DOM backdrop behind it. A backdrop that kept filling
+   *  the window would spill out of the frame it is supposedly inside. */
+  const frameStyle = frameRect
+    ? { left: frameRect.x, top: frameRect.y, width: frameRect.w, height: frameRect.h }
+    : undefined
+  // The render surface follows the rect exactly, so the pixels being composed
+  // are the pixels being exported. Depended on by SIZE rather than by identity:
+  // this object is rebuilt every render, and the effect must not be.
+  const frameW = frameRect?.w ?? 0
+  const frameH = frameRect?.h ?? 0
+  useEffect(() => {
+    const engine = engineRef.current
+    if (!engine || !ready) return
+    if (framing.exporting) return // the export pins the full output resolution itself
+    if (framing.activeFrame && !framing.frameVp) return
+    if (frameW > 0 && frameH > 0) {
+      const dpr = window.devicePixelRatio || 1
+      engine.setRenderSize(Math.round(frameW * dpr), Math.round(frameH * dpr))
+    } else {
+      engine.setRenderSize(null)
+    }
+  }, [frameW, frameH, framing.activeFrame, framing.frameVp, framing.exporting, ready, engineRef])
+
   /**
    * Re-rasterise the lyric sheet whenever the canvas changes size.
    *
@@ -2212,7 +2373,11 @@ export default function Lab() {
     }
     const observer = new ResizeObserver(() => {
       window.clearTimeout(timer)
-      timer = window.setTimeout(settle, 250)
+      // The export pins its own size and rasterises for it; re-doing that here
+      // would fight it mid-render.
+      timer = window.setTimeout(() => {
+        if (!framing.exporting) settle()
+      }, 250)
     })
     observer.observe(canvas)
     settle()
@@ -2234,7 +2399,7 @@ export default function Lab() {
     // Re-running when the slot fills tears the observer down and back up, which
     // resets `last` to 0 and makes the next settle() unconditional — this time
     // with the file actually there.
-  }, [ready, canvasRef, rasterLyricsAt, lyricsClip])
+  }, [ready, canvasRef, rasterLyricsAt, framing.exporting, lyricsClip])
 
   // Music follows the model clock — the exact mirror main uses, shared. Silent
   // while an export runs; the export mixes its own audio.
@@ -2282,7 +2447,7 @@ export default function Lab() {
    * accident, the canvas being opaque green; transparent has no such cover, so
    * the backdrop simply showed through the frame it was excluded from.
    */
-  const backdropInShot = !!bgImage && !bgImage.dome
+  const backdropInShot = !!bgImage && !bgImage.dome && !isCompositingBackground(framing.liveBackground)
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   /** The video backdrop, which plays natively — see useAudioClock. */
@@ -2295,6 +2460,7 @@ export default function Lab() {
     videoRef: bgVideoRef,
     syncLyricsTo,
     tickPlanes,
+    disabled: framing.exporting,
   })
 
   // Only one row open at a time — that is what lets presets-then-parameters sit
@@ -2511,15 +2677,6 @@ export default function Lab() {
     const source = scene.assets.models.find((m) => m.model.id === castEntry?.id)?.model.source
     return source?.kind === "folder" ? source.dir : null
   }, [scene.assets.models, castEntry])
-  // Which built-in preset the picked material is actually rendering with — the
-  // inspector's own colour/specular edits silently do nothing for a grouped
-  // material (its look comes from this graph, not the PMX fields), and the
-  // panel has no way to say so without knowing which group, if any, owns it.
-  const pickedMaterialStyle = useMemo(() => {
-    if (!pickedMaterial || !castEntry) return null
-    const group = (groupsByModel[castEntry.id] ?? []).find((g) => g.materials.includes(pickedMaterial))
-    return group?.graph?.name ?? null
-  }, [pickedMaterial, castEntry, groupsByModel])
   // The FILE name, in the header and in the row alike.
   //
   // Not the PMX `name` field: the two disagree on most models — an author's
@@ -2537,25 +2694,8 @@ export default function Lab() {
     void (async () => {
       try {
         const entry = scene.assets.models.find((m) => m.model.id === castEntry?.id)
-        const source = entry?.model.source
-        // Three ways a model's bytes can actually be reachable, matching
-        // ModelSource: served from a folder (the boot/demo model), unpacked
-        // into the working bundle (an upload — "nothing is uploaded" means
-        // the bytes live in IndexedDB/memory, never a URL), or still a zip
-        // archive's own URL. modelPmxUrl only ever covered the first, so an
-        // uploaded model's document silently never loaded.
-        const bytes = await (async () => {
-          if (!source) return null
-          if (source.kind === "folder") {
-            const url = modelPmxUrl(entry!.model)
-            return url ? await (await fetch(url)).arrayBuffer() : null
-          }
-          if (source.kind === "bundle") {
-            const file = bundleFile(source.path)
-            return file ? await file.arrayBuffer() : null
-          }
-          return await (await fetch(source.url)).arrayBuffer()
-        })()
+        const url = entry ? modelPmxUrl(entry.model) : null
+        const bytes = url ? await (await fetch(url)).arrayBuffer() : null
         if (!stale && bytes) setPmxDoc(readPmxDocument(bytes))
       } catch {
         if (!stale) setPmxDoc(null)
@@ -2564,7 +2704,7 @@ export default function Lab() {
     return () => {
       stale = true
     }
-  }, [castFile, castEntry, scene.assets.models, bundleFile])
+  }, [castFile, castEntry, scene.assets.models])
 
   // The open section IS the overlay. A section names a part of the model, and
   // the only way to see which faces a material owns or where a joint sits is on
@@ -2617,36 +2757,12 @@ export default function Lab() {
       }),
     [],
   )
-  /**
-   * The document is always written — it is what an export reads, so an edit
-   * that only reached the canvas would not ship. The canvas write is the
-   * bonus: setMaterialUniforms covers exactly the fields it can reach without
-   * a draw-list or bind-group rebuild (colour, specular, shininess), skipped
-   * entirely for a material a style group already owns — the group's compiled
-   * graph is what is actually drawn for it, and writing a buffer nothing reads
-   * would look like a silent failure rather than the honest "this material's
-   * look comes from its group" the row itself should be saying.
-   */
   const editMaterial = useCallback(
     (patch: MaterialPatch) => {
       editDoc((doc) => setMaterials(doc, { materials: [patch] }))
       if (patch.rename) setPickedMaterial(patch.rename)
-      const engine = engineRef.current
-      const grouped = (groupsByModel[castEntry?.id ?? ""] ?? []).some((g) => g.materials.includes(patch.name))
-      if (engine && castEntry && !grouped && (patch.diffuse || patch.specular || patch.specularPower !== undefined || patch.ambient)) {
-        // patch.name is the material's name BEFORE this edit — which is what the
-        // engine's own material list still has, rename or not. The engine was
-        // not told about the rename (see AGENTS.md: nothing here is an index
-        // rebuild), so looking it up by the NEW name would miss.
-        engine.setMaterialUniforms(castEntry.id, patch.name, {
-          diffuse: patch.diffuse,
-          specular: patch.specular,
-          specularPower: patch.specularPower,
-          ambient: patch.ambient,
-        })
-      }
     },
-    [editDoc, engineRef, castEntry, groupsByModel],
+    [editDoc],
   )
   const editBone = useCallback(
     (patch: BonePatch) => {
@@ -2655,111 +2771,34 @@ export default function Lab() {
     },
     [editDoc],
   )
-  const editModelInfo = useCallback(
-    (patch: ModelInfoPatch) => editDoc((doc) => setModelInfo(doc, patch)),
-    [editDoc],
-  )
 
   /**
-   * Click the model to select what you clicked.
+   * Click a bone on the model.
    *
-   * The list in the dock and the overlay on the canvas are two views of one
-   * thing, so they have to be two ways of doing the same act — an overlay you
-   * can see and cannot touch is a picture of one. Whichever you use, the same
-   * item is selected and the same inspector opens.
+   * The list in the dock and the skeleton on the canvas are two views of one
+   * thing, so they have to be two ways of doing the same act — a rig you can
+   * see and cannot touch is a picture of a rig. Whichever you use, the same
+   * bone ends up selected and the same inspector opens.
    *
-   * WHICH kind is picked follows the open section, because that is what is
-   * drawn: a pick can only mean the thing you can see. A plain click, matching
-   * PMXEditor's own viewport and every standard 3D tool's edit mode — picking
-   * is only ever armed while a mode is chosen (Camera has none to pick), so
-   * there is no ambient risk of an orbit's mousedown/mouseup landing on
-   * something and selecting it by accident.
+   * Only while Bones is open. The overlay is what makes a bone visible, and a
+   * click that selected something invisible would be a click that changed the
+   * app for no reason the user could see. It is also what keeps this from
+   * competing with the camera: a drag still orbits, because a drag is not a
+   * click.
    */
-  const pickAt = useCallback(
+  const pickBoneAt = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (openModelRow !== "bones") return
       const engine = engineRef.current
       if (!engine || !castEntry) return
       const rect = e.currentTarget.getBoundingClientRect()
-      const px = e.clientX - rect.left
-      const py = e.clientY - rect.top
-      // A miss does NOTHING — it does not clear. Orbit and pick share one
-      // gesture (a plain click), so a tap that lands a pixel off the model
-      // while you are just looking around would otherwise blow away a
-      // selection you meant to keep. Clearing it is deliberate, below —
-      // double-click, not a second single click on the same item, which is
-      // too easy to trigger by accident when re-confirming a pick.
-      if (openModelRow === "bones") {
-        const hit = engine.pickBone(px, py, { modelName: castEntry.id })
-        if (hit) setPickedBone(hit.boneName)
-      } else if (openModelRow === "materials") {
-        const hit = engine.pickMaterial(px, py, { modelName: castEntry.id })
-        if (hit) setPickedMaterial(hit.materialName)
-      }
+      const hit = engine.pickBone(e.clientX - rect.left, e.clientY - rect.top, { modelName: castEntry.id })
+      // A miss CLEARS. Clicking empty space to deselect is what every viewport
+      // does, and leaving the last pick standing makes the inspector look stuck.
+      setPickedBone(hit?.boneName ?? null)
     },
     [openModelRow, engineRef, castEntry],
   )
-
-  /** Double-click anywhere in the viewport clears the active mode's pick.
-   *  Not gated on hitting the same item again — that reintroduces the exact
-   *  precision problem a deliberate deselect gesture exists to avoid. */
-  const deselectAt = useCallback(() => {
-    if (openModelRow === "bones") setPickedBone(null)
-    else if (openModelRow === "materials") setPickedMaterial(null)
-  }, [openModelRow])
-
-  /**
-   * A material under the pointer previews as a pick before a click makes it
-   * one — see setHoveredMaterial on the engine for what that draws.
-   *
-   * Coalesced to one pickMaterial per animation frame rather than one per
-   * pointermove: the raycast walks every triangle, and a trackpad can fire
-   * that event faster than the screen repaints. Only the LATEST position
-   * survives to the frame that actually runs.
-   */
-  const hoverFrame = useRef<number | null>(null)
-  const hoverPos = useRef<{ x: number; y: number } | null>(null)
-  const hoverAt = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (openModelRow !== "materials" || pickedMaterial !== null) return
-      const rect = e.currentTarget.getBoundingClientRect()
-      hoverPos.current = { x: e.clientX - rect.left, y: e.clientY - rect.top }
-      if (hoverFrame.current !== null) return
-      hoverFrame.current = requestAnimationFrame(() => {
-        hoverFrame.current = null
-        const engine = engineRef.current
-        const pos = hoverPos.current
-        if (!engine || !pos || !castEntry) return
-        const hit = engine.pickMaterial(pos.x, pos.y, { modelName: castEntry.id })
-        engine.setHoveredMaterial(hit ? castEntry.id : null, hit?.materialName ?? null)
-      })
-    },
-    [openModelRow, pickedMaterial, engineRef, castEntry],
-  )
-  const clearHover = useCallback(() => {
-    if (hoverFrame.current !== null) {
-      cancelAnimationFrame(hoverFrame.current)
-      hoverFrame.current = null
-    }
-    engineRef.current?.setHoveredMaterial(null, null)
-  }, [engineRef])
-  // The list's own hover — no raycast, the name is already known. Cancels any
-  // pending viewport hover so the two do not fight over which name lands last.
-  const hoverMaterialRow = useCallback(
-    (name: string | null) => {
-      if (pickedMaterial !== null) return
-      if (hoverFrame.current !== null) {
-        cancelAnimationFrame(hoverFrame.current)
-        hoverFrame.current = null
-      }
-      engineRef.current?.setHoveredMaterial(name && castEntry ? castEntry.id : null, name)
-    },
-    [pickedMaterial, engineRef, castEntry],
-  )
-  // Stale as soon as the pointer is no longer the reason a material is
-  // highlighted — a pick, or the section going away, both make it so.
-  useEffect(() => {
-    if (openModelRow !== "materials" || pickedMaterial !== null) clearHover()
-  }, [openModelRow, pickedMaterial, clearHover])
 
   // A pick belongs to the section that made it. Leaving a section with one
   // still selected would narrow the overlay the next time you open it, for a
@@ -2768,7 +2807,8 @@ export default function Lab() {
     if (openModelRow !== "materials") setPickedMaterial(null)
     if (openModelRow !== "bones") setPickedBone(null)
   }, [openModelRow])
-  const [postTab, setPostTab] = useState<"tone" | "bloom" | "outline">("tone")
+  const [cameraTab, setCameraTab] = useState<"lens" | "focus">("lens")
+  const [postTab, setPostTab] = useState<"grade" | "tone" | "bloom" | "outline">("grade")
   const [lightTab, setLightTab] = useState<"world" | "sun">("world")
 
   // Sun, world and glow — seeded from the document, which is ALSO what the
@@ -2787,7 +2827,7 @@ export default function Lab() {
       setSettings((s2) => ({ ...s2, [key]: { ...s2[key], ...part } })),
     [],
   )
-  const { sun, world, bloom, grade, ground, physics, view, audio } = settings
+  const { sun, world, bloom, dof, grade, ground, physics, view, audio } = settings
   // The scene's music level onto the element. `volume` is a property with no
   // content attribute behind it, so React cannot carry it in the JSX — written
   // here, and on every track change too: a new src keeps the element's level,
@@ -2815,12 +2855,201 @@ export default function Lab() {
       stampEffectUids(typeof update === "function" ? (update as (p: AppliedEffect[]) => AppliedEffect[])(prev) : update),
     )
   }, [])
+  /** Which effect's strip is open below the list. BY UID, like everything else
+   *  addressing one COPY of an effect rather than the effect. */
+  const [selectedEffect, setSelectedEffect] = useState<string | null>(null)
+  /** Which of that effect's strips is selected, or null when none is. A blend
+   *  belongs to ONE firing, so the panel has to know which. */
+  const [selectedStrip, setSelectedStrip] = useState<number | null>(null)
+  /** Patch one applied effect's timing, by uid. */
+  const patchEffect = useCallback(
+    (uid: string, patch: Partial<Pick<AppliedEffect, "influence" | "window">>) => {
+      setBgEffects((list) => list.map((e) => (e.uid === uid ? { ...e, ...patch } : e)))
+    },
+    [setBgEffects],
+  )
 
-  // The grade a scene wears is a BUILT-IN preset only now — no editor, no
-  // drafts, no community browsing. gradeSpec already falls through to Neutral
-  // for a name it does not recognise, so an old scene document naming a draft
-  // that no longer exists still renders instead of erroring.
-  const appliedGradeSpec = gradeSpec(settings.grade.preset)
+  // ONE slot for the three libraries — see useBrowseSurface. They were three
+  // independent booleans here, so opening one left the others up: a second
+  // library over the first, the same size and position, and the swap read as a
+  // flash. Exclusion is now structural rather than something each opener has to
+  // remember, which is also what makes LIBRARY_SHELL's suppressed animations
+  // land as one panel changing contents.
+  const {
+    facet: libraryFacet,
+    open: openBrowse,
+    close: closeBrowse,
+    closeIf: closeBrowseIf,
+    graphLibrary: graphLib,
+    gradesOpen: gradeLibOpen,
+    effectsOpen: effectLibOpen,
+    galleryOpen,
+  } = useBrowseSurface()
+
+  // Grade: main's full selection model. Drafts and community feed both the
+  // quick list and NAME RESOLUTION — a scene applying a community grade must
+  // resolve it the way the render will.
+  const { drafts: gradeDrafts } = useDrafts<GradeItem>("grade")
+  const communityGrades = useCommunity<GradeItem>("grade")
+  // Whose name a saved draft carries. Signed out it is simply "you" — a draft
+  // never leaves this device until it is published, and publishing is where an
+  // account becomes the answer.
+  const { data: authSession } = useSession()
+  const authorName = authSession?.user.username ?? t.effectLibrary.you
+  // The grade editor is a floating SCRATCHPAD, the shipped editor's own:
+  // `subject` is the working copy — live on the render, written nowhere. Only
+  // the save-on-close dialog creates or updates a draft, so closing clean, or
+  // discarding, leaves no trace.
+  const [gradeEditor, setGradeEditor] = useState<{
+    sessionId: number
+    subject: GradeEditorSubject
+    opened: GradeEditorSubject
+    savePrompt: boolean
+  } | null>(null)
+  // Lazy: the rect resolves on first OPEN — an event handler, so a panel this
+  // session never uses costs no storage read and no second render.
+  const {
+    rect: gradePanelRect,
+    update: updateGradePanelRect,
+    ensure: ensureGradePanelRect,
+  } = useStoredRect(GRADE_PANEL_KEY, defaultPanelRect)
+  const appliedGradeDraftId = gradeDrafts.find((d) => d.name === grade.preset)?.id ?? null
+  // A built-in grade's name is its ID in the document and a TRANSLATION on
+  // screen — the same split main uses. Drafts and community grades are user
+  // strings, so they show exactly as authored.
+  const gradeLabel = useCallback(
+    (name: string) => t.scene.gradePresets[name as keyof typeof t.scene.gradePresets] ?? name,
+    [t],
+  )
+  const pickGrade = useCallback(
+    (name: string) => patch("grade", { preset: name, intensity: recallIntensity(name) }),
+    [patch],
+  )
+  // An open session OVERRIDES the document's grade: the editor's working spec is
+  // what the render resolves to, which is the whole reason dragging a slider is
+  // visible on the canvas. The document is untouched until the session saves.
+  const appliedGradeSpec = useMemo(
+    () => (gradeEditor ? gradeEditor.subject.spec : gradeSpec(grade.preset, [...gradeDrafts, ...communityGrades])),
+    [gradeEditor, grade.preset, gradeDrafts, communityGrades],
+  )
+  // Same three parts as the effect list, in the same order: the rows, an
+  // "edited" hint when what is applied has drifted from the entry it came from,
+  // and a transient row for a look no list holds. Both lists say the same thing
+  // the same way — otherwise an unsaved grade edit reads as though the preset
+  // itself had changed.
+  const gradeItems = useMemo(() => {
+    const items = [
+      // Sorted by the LABEL, which is the grade library's own ordering (it sorts
+      // its built-in rows the same way, through the same translation). The two
+      // lists hold the same set, so a different order between them means hunting
+      // for a name in a place it was not a moment ago.
+      ...quickPickItems(
+        [...GRADE_PRESETS].sort((a, b) => gradeLabel(a.name).localeCompare(gradeLabel(b.name))),
+        gradeDrafts,
+        appliedGradeDraftId,
+      ).map((g) => ({
+        id: g.name,
+        label: gradeLabel(g.name),
+        section: g.owner === "local" ? ("local" as const) : ("builtin" as const),
+      })),
+      ...communityQuickPickItems(communityGrades),
+    ]
+    const preset = settings.grade.preset
+    const source = gradeSpec(preset, [...gradeDrafts, ...communityGrades])
+    if (JSON.stringify(appliedGradeSpec) === JSON.stringify(source)) return items
+    const known = items.some((i) => i.id === preset)
+    const withOwn = known ? items : [...items, { id: preset, label: preset, section: "local" as const }]
+    return withOwn.map((i) => (i.id === preset ? { ...i, hint: t.scene.edited } : i))
+  }, [gradeDrafts, appliedGradeDraftId, communityGrades, gradeLabel, settings.grade.preset, appliedGradeSpec, t])
+  // Plain functions, the shipped editor's own call: they feed dialogs that are
+  // not memoized, so memoizing buys nothing.
+  const openGradeEditor = (subject: GradeEditorSubject) => {
+    ensureGradePanelRect()
+    setGradeEditor((prev) => ({ sessionId: (prev?.sessionId ?? 0) + 1, subject, opened: subject, savePrompt: false }))
+  }
+  /**
+   * Edit the grade the scene is WEARING — the quick list's own door, and the
+   * shipped editor's `editCurrentGrade` unchanged.
+   *
+   * The subject is the applied look resolved back to a library row: your draft
+   * or a community item when the name belongs to one (so the session saves back
+   * into it), the preset name itself when it is a built-in — and only then is
+   * there an `origin`, because only a built-in is something "back to preset" can
+   * revert to. Everything after that is the flow the editors already share:
+   * the session PREVIEWS through appliedGradeSpec and never writes
+   * settings.grade, so nothing is saved until the close prompt says so.
+   */
+  const editCurrentGrade = () => {
+    const preset = settings.grade.preset
+    const own = [...gradeDrafts, ...communityGrades].find((g) => nameKey(g.name) === nameKey(preset))
+    openGradeEditor({
+      id: own?.id ?? preset,
+      name: preset,
+      spec: appliedGradeSpec,
+      origin: own ? undefined : preset,
+    })
+  }
+  const editGrade = (next: GradeEditorSubject) => {
+    setGradeEditor((prev) => (prev ? { ...prev, subject: next } : prev))
+    // Your own draft saves as you go. Only drafts: a built-in or someone else's
+    // published work has no local home to write to until the close prompt gives
+    // it one.
+    if (isDraft("grade", next.id)) updateDraftSoon("grade", next.id, { payload: { spec: next.spec } })
+  }
+  const freeGradeName = (wanted: string, editingId?: string) => freeName("grade", wanted, editingId)
+  /** The BUILT-IN spec an edit descends from — what "back to preset" reverts to.
+   *  Neutral, never the authoring starting point: revert means back to no grade. */
+  const gradeAncestor = (subject?: GradeEditorSubject) =>
+    GRADE_PRESETS.find((g) => g.name === (subject?.origin ?? subject?.name))?.payload.spec ?? NEUTRAL_SPEC
+  const requestCloseGradeEditor = () => {
+    if (!gradeEditor) return
+    const { subject, opened } = gradeEditor
+    const dirty = subject.name !== opened.name || JSON.stringify(subject.spec) !== JSON.stringify(opened.spec)
+    if (!dirty) {
+      setGradeEditor(null)
+      return
+    }
+    // An existing draft has a home — save in place, no questions.
+    if (isDraft("grade", subject.id)) {
+      updateDraft("grade", subject.id, { payload: { spec: subject.spec } })
+      setGradeEditor(null)
+      return
+    }
+    setGradeEditor({ ...gradeEditor, savePrompt: true })
+  }
+  const saveGradeEdit = (wanted: string): string | null => {
+    if (!gradeEditor) return null
+    const { subject } = gradeEditor
+    const keep = isDraft("grade", subject.id) ? subject.id : undefined
+    const name = freeGradeName(wanted, subject.id)
+    if (keep) updateDraft("grade", keep, { name, payload: { spec: subject.spec } })
+    else
+      createDraft("grade", {
+        name,
+        payload: { spec: subject.spec },
+        author: authorName,
+        // Editing your OWN published preset makes a working copy of it, so
+        // publishing writes that item's next version instead of a second item.
+        ...draftOriginOf(communityGrades, subject.id),
+      })
+    // Applying is what puts the result in the DOCUMENT — the session previewed
+    // through appliedGradeSpec and never touched settings.grade, so without this
+    // the saved scene would still be wearing whatever it wore before.
+    pickGrade(name)
+    setGradeEditor(null)
+    return null
+  }
+  /** A draft that saved as you went goes back to what the session opened on —
+   *  otherwise "discard" would keep everything except the last few hundred ms. */
+  const discardGradeEdit = () => {
+    if (!gradeEditor) return
+    const { subject, opened } = gradeEditor
+    if (isDraft("grade", subject.id)) {
+      cancelDraftWrites("grade", subject.id)
+      updateDraft("grade", subject.id, { payload: { spec: opened.spec } })
+    }
+    setGradeEditor(null)
+  }
   type UploadState =
     | { kind: "pick"; files: File[]; paths: string[]; target: ModelTarget }
     | { kind: "notice"; message: string }
@@ -2991,7 +3220,11 @@ export default function Lab() {
     }
   }, [ready, scene, bundleFile, setMusicFile, swapBgImage, swapHdri])
 
-  useSceneSync({
+  // noteAppliedWgsl is the WGSL editor's half of the bargain: the editor
+  // compiles straight to the engine for its live preview, and telling the sync
+  // pass what is already on screen keeps it from compiling the same shader a
+  // second time when the applied effect lands in state.
+  const { noteAppliedWgsl } = useSceneSync({
     engineRef,
     ready,
     settings,
@@ -3002,12 +3235,135 @@ export default function Lab() {
     hasBackdrop: !!bgImage && !bgImage.dome,
     skybox: bgImage?.dome ? bgImage.file : null,
     hdri: hdri?.file ?? null,
-    exportBackground: "scene",
+    exportBackground: framing.liveBackground,
     // Who an effect that declares a dissolve is about — the cast in order, so
     // the first of them is the engine's subject 0.
     castIds: castIdList,
   })
 
+  // Effects: the same selection model as grade, one library over.
+  const { drafts: effectDrafts } = useDrafts<EffectItem>("effect")
+  const communityEffects = useCommunity<EffectItem>("effect")
+  // "Edited" means the APPLIED shader differs from its saved source, built-in or
+  // draft. An editor session applies as you type, so the row says so while the
+  // session runs and stops saying it the moment you save or discard — the list
+  // and the canvas never disagree about what is on screen. An unsaved NEW effect
+  // is in no list at all, so it gets a transient row: without one the trigger
+  // falls through to its placeholder and the dock reads "None" while an effect
+  // is plainly running.
+  const effectItems = useMemo(() => {
+    const items = [
+      // By name, matching the effect library's own ordering — see the grade list.
+      ...quickPickItems(
+        [...EFFECTS].sort((a, b) => a.name.localeCompare(b.name)),
+        effectDrafts,
+        null,
+      ).map((e) => ({
+        id: e.name,
+        label: e.name,
+        section: e.owner === "local" ? ("local" as const) : ("builtin" as const),
+      })),
+      ...communityQuickPickItems(communityEffects),
+    ]
+    // Every applied effect that is no longer identical to any library entry gets
+    // the "edited" hint, and one that is in no list at all gets a row of its
+    // own — otherwise the scene wears a shader the picker cannot show.
+    const known = [...EFFECTS, ...effectDrafts, ...communityEffects]
+    let out = items
+    for (const applied of bgEffects) {
+      const pristine = known.some((e) => e.name === applied.name && e.payload.wgsl === applied.wgsl)
+      if (pristine) continue
+      if (!out.some((i) => i.id === applied.name)) {
+        out = [...out, { id: applied.name, label: applied.name, section: "local" as const }]
+      }
+      out = out.map((i) => (i.id === applied.name ? { ...i, hint: t.scene.edited } : i))
+    }
+    return out
+  }, [effectDrafts, bgEffects, communityEffects, t])
+
+  /** The row a pick should REPLACE, or null when a pick means "add". Set by a
+   *  row's replace button; both doors onto the list read it, so replacing works
+   *  from the dock picker and from the library alike. */
+  const [replaceTarget, setReplaceTarget] = useState<number | null>(null)
+  const pickEffect = useCallback(
+    (name: string) => {
+      // Picking what is ALREADY applied takes it off — the tick is a tick you
+      // can click off, which is also what spares the list a permanent "None"
+      // row at the top. With several applied it is per effect, so this is now
+      // membership rather than replacement.
+      if (replaceTarget === null && bgEffects.some((e) => e.name === name)) {
+        setBgEffects((list) => list.filter((e) => e.name !== name))
+        return
+      }
+      // APPENDED, so a newly picked effect lands on top of what is already
+      // there. Where it belongs is the list's business, and the Background row
+      // is where that gets said.
+      //
+      // AND PLACED, in the same act. An effect that declared a `#duration` is a
+      // HIT — it has an arc, and its length is a fact about it — so it arrives
+      // as a strip at the playhead, already the right size, exactly as a clip
+      // dragged into any timeline arrives at the length of its media. One that
+      // declared nothing is AMBIENT and gets no strip: stars are a condition
+      // the scene is in, not something that happens at a moment.
+      //
+      // This is what makes adding an effect the same gesture as registering it.
+      // There is no second step to discover, because no timeline has one.
+      const placed = (e: AppliedEffect): AppliedEffect => {
+        const at = engineRef.current?.getModel(masterId ?? "")?.getAnimationProgress().current ?? 0
+        const strip = stripFor(parseDirectives(e.wgsl).directives.duration, secondsToFrames(at))
+        return strip ? { ...e, window: [strip] } : e
+      }
+      const add = (raw: AppliedEffect) =>
+        setBgEffects((list) => {
+          const e = placed(raw)
+          if (replaceTarget === null) return [...list, e]
+          const next = [...list]
+          next[replaceTarget] = e
+          return next
+        })
+      if (replaceTarget !== null) setReplaceTarget(null)
+      // Drafts and community rows carry their own shader — they apply by value.
+      const own = [...effectDrafts, ...communityEffects].find((e) => e.name === name)
+      if (own) {
+        add({ id: own.id, name: own.name, wgsl: own.payload.wgsl })
+        return
+      }
+      // Straight from the definition — round-tripping a built-in through the
+      // by-name lookup with its id is what made every built-in "unknown".
+      const def = EFFECTS.find((e) => e.name === name)
+      if (def) add(applyDefaults(def))
+    },
+    [effectDrafts, communityEffects, bgEffects, replaceTarget, engineRef, masterId],
+  )
+  /**
+   * Swap the effect at one position for another, by name.
+   *
+   * Deliberately NOT pickEffect with replaceTarget set: that flag is state, and
+   * a handler that sets it and then calls pickEffect in the same tick reads the
+   * value from before the set — so the pick appended instead of replacing. The
+   * row knows its own index, which is the whole of what replacement needs.
+   */
+  const replaceEffectAt = useCallback(
+    (index: number, name: string) => {
+      const own = [...effectDrafts, ...communityEffects].find((e) => e.name === name)
+      const def = own ? null : EFFECTS.find((e) => e.name === name)
+      const next: AppliedEffect | null = own
+        ? { id: own.id, name: own.name, wgsl: own.payload.wgsl }
+        : def
+          ? applyDefaults(def)
+          : null
+      if (!next) return
+      setBgEffects((list) => list.map((e, k) => (k === index ? next : e)))
+    },
+    [effectDrafts, communityEffects],
+  )
+
+  /** What the row, the picker and the palette all say at rest.
+   *
+   *  One effect is NAMED — that is the decision, and reciting a count instead
+   *  would make you open the row to learn something the row could have said.
+   *  Several are COUNTED, because the list below is where they are read and no
+   *  one of them is the answer. */
   /** What the Planes row says at rest.
    *
    *  NAMED when there is one, COUNTED when there are several — the effect row's
@@ -3017,6 +3373,154 @@ export default function Lab() {
    *  describing the wrong feature. */
   const planeSummary =
     planes.length === 0 ? null : planes.length === 1 ? planes[0].file : t.lab.ctl.planesN(planes.length)
+
+  const effectSummary =
+    bgEffects.length === 0 ? null : bgEffects.length === 1 ? bgEffects[0].name : t.lab.ctl.effectsN(bgEffects.length)
+
+  /** The edited effect back into the list it came from — IN PLACE when it was
+   *  already applied, appended when the session created it. Editing a layer
+   *  must not move it: the order is the composition. */
+  const mergeEffect = (list: AppliedEffect[], e: AppliedEffect): AppliedEffect[] => {
+    const at = list.findIndex((x) => x.id === e.id)
+    return at >= 0 ? list.map((x, i) => (i === at ? e : x)) : [...list, e]
+  }
+
+  // ── The WGSL effect editor ──
+  //
+  // The same scratchpad one library over: `subject` is what opened (its wgsl is
+  // the dirty baseline), `prior` is what the scene showed before — restored on
+  // discard, and on any close that saved nothing. Compiles preview live; drafts
+  // are written only by the save-on-close dialog.
+  const [effectEditor, setEffectEditor] = useState<{
+    sessionId: number
+    subject: AppliedEffect
+    /** The WHOLE list the scene wore before the session, not just the entry
+     *  being edited: a session previews its subject ALONE, so discarding has to
+     *  put every other layer back. */
+    prior: AppliedEffect[]
+    savePrompt: string | null
+  } | null>(null)
+  const effectSessionRef = useRef(0)
+  const {
+    rect: effectPanelRect,
+    update: updateEffectPanelRect,
+    ensure: ensureEffectPanelRect,
+  } = useStoredRect(WGSL_PANEL_KEY, defaultPanelRect)
+  /** Compile + apply in one step — the scene mirrors the buffer. */
+  const commitEffectCode = useCallback(
+    async (subject: AppliedEffect, wgsl: string) => {
+      const engine = engineRef.current
+      if (!engine) return { ok: false, diagnostics: [t.lab.engineNotReady] }
+      // setEffect, singular: a session previews its subject ALONE, so the
+      // canvas behind the panel is that shader and nothing else competing with
+      // it. The rest of the scene's layers come back from `prior` on close.
+      const r = await engine.setEffect(wgsl)
+      if (r.ok) {
+        noteAppliedWgsl(wgsl)
+        setBgEffects([{ ...subject, wgsl }])
+        // Same rule as grades: your own draft saves as you go.
+        if (isDraft("effect", subject.id)) updateDraftSoon("effect", subject.id, { payload: { wgsl } })
+      }
+      return r
+    },
+    [engineRef, noteAppliedWgsl, t],
+  )
+  // Memoized (unlike the grade editor's opener) because the command palette runs
+  // it: a plain function in runCommand's dependency array is something the
+  // compiler cannot keep memoized.
+  const openEffectEditor = useCallback(
+    (subject: AppliedEffect) => {
+      effectSessionRef.current += 1
+      // Opening AUTO-APPLIES the subject, which is what makes the canvas behind
+      // the panel the preview rather than a separate thing to keep in sync.
+      setEffectEditor({ sessionId: effectSessionRef.current, subject, prior: bgEffects, savePrompt: null })
+      ensureEffectPanelRect()
+      void commitEffectCode(subject, subject.wgsl)
+    },
+    [bgEffects, ensureEffectPanelRect, commitEffectCode],
+  )
+
+  /**
+   * What the scene is WEARING, as opposed to what the canvas is previewing.
+   *
+   * An open effect session narrows `bgEffects` to its subject on purpose — the
+   * canvas behind the panel is that shader and nothing competing with it — and
+   * `prior` puts the rest back on close. What must not follow the preview is
+   * anything that WRITES: the debounced state save would store a scene wearing
+   * one effect, so a refresh with the editor open lost the others for good
+   * (closing restores them, a reload never gets there), and makeSceneDoc feeds
+   * export and publish, so publishing mid-session shipped the preview.
+   *
+   * A preview is a way of looking. It has no business in the document.
+   */
+  const documentEffects = effectEditor ? effectEditor.prior : bgEffects
+  /** Edit the effect the scene is wearing. No subject to resolve — an applied
+   *  effect already IS its row, carried by value.
+   *
+   *  Only meaningful with ONE applied: "Edit shader" cannot say which of four
+   *  it means. With several, each row in the Background stack carries its own
+   *  edit, which can. */
+  /** Close request from the editor. Dirty → prompt; clean → the preview simply
+   *  ends, and whatever was applied before the session comes back. */
+  const requestCloseEffectEditor = async (code: string) => {
+    if (!effectEditor) return
+    if (code === effectEditor.subject.wgsl) {
+      setBgEffects(effectEditor.prior)
+      setEffectEditor(null)
+      return
+    }
+    // An existing draft saves in place when it compiles; a refusal (or a nameless
+    // new effect) goes through the dialog.
+    if (isDraft("effect", effectEditor.subject.id)) {
+      const engine = engineRef.current
+      const r = engine ? await engine.setEffect(code) : { ok: false }
+      if (r.ok) {
+        noteAppliedWgsl(code)
+        const { id, name } = effectEditor.subject
+        updateDraft("effect", id, { payload: { wgsl: code } })
+        setBgEffects(mergeEffect(effectEditor.prior, { id, name, wgsl: code }))
+        setEffectEditor(null)
+        return
+      }
+    }
+    setEffectEditor({ ...effectEditor, savePrompt: code })
+  }
+  const discardEffectEdit = () => {
+    if (!effectEditor) return
+    // Discard UNDOES the as-you-go writes, not just stops them.
+    if (isDraft("effect", effectEditor.subject.id)) {
+      cancelDraftWrites("effect", effectEditor.subject.id)
+      updateDraft("effect", effectEditor.subject.id, { payload: { wgsl: effectEditor.subject.wgsl } })
+    }
+    setBgEffects(effectEditor.prior)
+    setEffectEditor(null)
+  }
+  const freeEffectName = (wanted: string, editingId?: string) => freeName("effect", wanted, editingId)
+  const saveEffectEdit = async (wanted: string): Promise<string | null> => {
+    if (!effectEditor?.savePrompt) return null
+    const { subject, savePrompt: code } = effectEditor
+    // A broken shader must not land in the library — it would be auto-applied on
+    // every future pick. Compiling IS applying, which is also what save wants.
+    const isExisting = isDraft("effect", subject.id)
+    const engine = engineRef.current
+    const r = engine ? await engine.setEffect(code) : { ok: false, diagnostics: [t.lab.engineNotReady] }
+    if (!r.ok) return r.diagnostics[0] ?? t.lab.compileFailed
+    noteAppliedWgsl(code)
+    const keep = isExisting ? subject.id : undefined
+    const name = freeEffectName(wanted, subject.id)
+    let id = keep
+    if (keep) updateDraft("effect", keep, { name, payload: { wgsl: code } })
+    else
+      id = createDraft("effect", {
+        name,
+        payload: { wgsl: code },
+        author: authorName,
+        ...draftOriginOf(communityEffects, subject.id),
+      }).id
+    setBgEffects(mergeEffect(effectEditor.prior, { id: id!, name, wgsl: code }))
+    setEffectEditor(null)
+    return null
+  }
 
   // The chrome waits one tick before it exists, which is main's own gate
   // (app/page.tsx `mounted`). Two things need it: values read from
@@ -3069,14 +3573,28 @@ export default function Lab() {
   // raises it back. No Escape closer — Escape keeps closing the topmost
   // LIBRARY; the stack walk skips surfaces that never close.
   const dockZ = useZOrder()
+  const [inspectorRaise, setInspectorRaise] = useState(0)
+  const inspectorZ = useZOrder(inspectorRaise)
   const pmxZ = useZOrder()
 
+  // ── Inspect a cast member ──
+  // Clicking a cast row selects the model and opens the right dock on ITS
+  // style groups — the inspector is about what you picked. The real
+  // MaterialsPanel mounts, not a lite copy: tree, drag-to-regroup, rename,
+  // visibility, hover-highlight, per-group look QuickPick. Both deep doors hang
+  // off it too — the shader-graph library and the node editor — and they are
+  // FLOATING panels rather than right-dock ones, so they join the z-order stack
+  // the libraries already live in instead of evicting the inspector that opened
+  // them. Editing a look while you cannot see the group you are editing is not
+  // a workflow.
+  const [inspectedId, setInspectedId] = useState<string | null>(null)
   //     Whose clip the timeline edits. ONE at a time — a scene has a cast, but
   //     a dopesheet's bone gutter can only honestly name one character's bones,
-  //     and two casts of keys on one axis is a chart, not an editor. Falls back
-  //     to the first of the cast so opening the fold on an untouched scene
-  //     edits something rather than nothing. A shut fold edits nobody, which is
-  //     what hands the clip back.
+  //     and two casts of keys on one axis is a chart, not an editor. Follows
+  //     the inspected member so picking a character in the viewport is also how
+  //     you choose whose motion to key; falls back to the first of the cast so
+  //     opening the fold on an untouched scene edits something rather than
+  //     nothing. A shut fold edits nobody, which is what hands the clip back.
   /**
    * What the timeline was opened ON — whose clip, and which of its three tracks.
    *
@@ -3107,13 +3625,19 @@ export default function Lab() {
    *  through here for the same reason. */
   const editClipRef = useRef(editClip)
   useEffect(() => {
-    clipTargetRef.current = editTarget?.modelId ?? cast[0]?.id ?? ""
+    clipTargetRef.current = editTarget?.modelId ?? inspectedId ?? cast[0]?.id ?? ""
     editClipRef.current = editClip
   })
-  // The first of the cast is the fallback, so opening the fold from the
+  // The inspected cast member is the fallback, so opening the fold from the
   // chevron alone still edits something sensible.
-  const editingModelId = timelineUnfolded ? (editTarget?.modelId ?? cast[0]?.id ?? null) : null
+  const editingModelId = timelineUnfolded ? (editTarget?.modelId ?? inspectedId ?? cast[0]?.id ?? null) : null
   const editingKind: ClipEditKind = editTarget?.kind ?? "motion"
+  const inspected = models.find((m) => m.id === inspectedId) ?? null
+  // Which group the node editor is bound to. Per MODEL, which is why moving the
+  // inspector to another character clears it: group ids are per model ("hair"
+  // exists on both), so a kept id would silently rebind the open editor to a
+  // different character's group of the same name.
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null)
   // The inverted-hull outline pass, off by default since 0.25.2 and reachable
   // only by searching for it. It lives in the document (settings.outline) like
   // every other look setting; when outlines earn size, opacity and colour
@@ -3128,6 +3652,14 @@ export default function Lab() {
   useEffect(() => {
     outlineRef.current = settings.outline.enabled
   })
+  /** Open the materials inspector on a model — the cast row's own click, the
+   *  row's Materials button and the palette all come through here. */
+  /** The export panel, from anywhere. Capture and every export setting land
+   *  here — the panel IS the surface for all of them. */
+  const openExport = useCallback(() => {
+    setExportOpen(true)
+    setExportRaise((n) => n + 1)
+  }, [])
   /**
    * Uploaded this session and not styled yet.
    *
@@ -3141,14 +3673,89 @@ export default function Lab() {
   const noteArrival = useCallback((id: string) => setUnstyled((prev) => (prev.includes(id) ? prev : [...prev, id])), [])
   const noteStyled = useCallback((id: string) => setUnstyled((prev) => prev.filter((x) => x !== id)), [])
 
-  // The PMX inspector is the column's only occupant now — the style panel that
-  // used to share the right column with it is gone.
-  const closePmxInspector = useCallback(() => {
-    setPickedBone(null)
-    setPickedMaterial(null)
-  }, [])
-  useDockSlot("pmx-inspector", pickedBone !== null || pickedMaterial !== null, closePmxInspector)
+  /**
+   * Give up the right column, without handing the timeline to somebody else.
+   *
+   * `editingModelId` falls back to `inspectedId`, so dropping the inspector
+   * while the fold is open moves the dopesheet onto another character — which
+   * is the one thing a panel closing must not do, and it became reachable the
+   * moment selecting a bone started evicting this panel. Pinning what the fold
+   * is ALREADY editing makes the fallback moot; an explicit target set by a
+   * clip row's edit button is left exactly as it is.
+   */
+  const closeMaterials = useCallback(() => {
+    if (timelineUnfolded && editingModelId) {
+      setEditTarget((t) => t ?? { modelId: editingModelId, kind: editingKind })
+    }
+    setInspectedId(null)
+  }, [timelineUnfolded, editingModelId, editingKind])
+  const closeExport = useCallback(() => setExportOpen(false), [])
+  // One panel in the right column, and the column decides — see use-dock-slot.
+  // The pairwise clears that used to live in the two openers below are gone with
+  // it: three panels is where writing the rule per pair stops working.
+  useDockSlot("materials", inspectedId !== null, closeMaterials)
+  useDockSlot("export", exportOpen, closeExport)
 
+  const openMaterials = useCallback(
+    (id: string | null) => {
+      if (!id) return
+      // Summoned, so it comes forward — even when it was already open on this
+      // model and nothing remounts.
+      setInspectorRaise((n) => n + 1)
+      // Only on a genuine change: re-opening the panel on the model you are
+      // already editing must not unbind the node editor you have open on it.
+      if (id !== inspectedId) setActiveGroupId(null)
+      setInspectedId(id)
+      // You came and looked — the suggestion has been taken.
+      noteStyled(id)
+    },
+    [inspectedId, noteStyled],
+  )
+  const inspectedGroups = useMemo(
+    () => (inspectedId ? (groupsByModel[inspectedId] ?? []) : []),
+    [groupsByModel, inspectedId],
+  )
+  const inspectGroupsApply = useCallback(
+    (next: StyleGroup[]) => {
+      if (inspectedId) void applyGroups(inspectedId, next)
+    },
+    [applyGroups, inspectedId],
+  )
+  const inspectCreateGroup = useCallback((): string => {
+    const id = newGroupId("group", inspectedGroups)
+    const labels = new Set(inspectedGroups.map((g) => g.label ?? g.id))
+    let label = t.lab.newGroup
+    for (let n = 2; labels.has(label); n++) label = t.lab.newGroupN(n)
+    inspectGroupsApply([
+      ...inspectedGroups,
+      { id, label, materials: [], graph: structuredClone(DEFAULT_GRAPH), renderClass: "auto" },
+    ])
+    return id
+  }, [inspectedGroups, inspectGroupsApply, t])
+  const inspectRenameGroup = useCallback(
+    (id: string, label: string) =>
+      inspectGroupsApply(inspectedGroups.map((g) => (g.id === id ? { ...g, label: label.trim() || id } : g))),
+    [inspectedGroups, inspectGroupsApply],
+  )
+  const inspectDeleteGroup = useCallback(
+    (id: string) => {
+      const g = inspectedGroups.find((x) => x.id === id)
+      if (!g || g.renderClass === "eye" || g.renderClass === "hair") return // Eye/Hair are pinned
+      inspectGroupsApply(inspectedGroups.filter((x) => x.id !== id))
+    },
+    [inspectedGroups, inspectGroupsApply],
+  )
+  const inspectMoveMaterial = useCallback(
+    (material: string, targetId: string | null) => {
+      const next = inspectedGroups.map((g) => ({ ...g, materials: g.materials.filter((m) => m !== material) }))
+      if (targetId) {
+        const target = next.find((g) => g.id === targetId)
+        if (target) target.materials = [...target.materials, material]
+      }
+      inspectGroupsApply(next)
+    },
+    [inspectedGroups, inspectGroupsApply],
+  )
   /**
    * Switch the whole scene to a rendering style.
    *
@@ -3193,11 +3800,325 @@ export default function Lab() {
     },
     [groupsByModel, applyGroups],
   )
+  const inspectPickGraph = useCallback(
+    (groupId: string, graphName: string) => {
+      if (!inspectedId) return
+      const entry = [...loadDrafts().graph, ...communityItems("graph"), ...GRAPH_LIBRARY].find(
+        (e) => e.name === graphName,
+      ) as GraphItem | undefined
+      const group = inspectedGroups.find((g) => g.id === groupId)
+      if (!entry || !group) return
+      const updated: StyleGroup = { ...group, graph: { ...entry.payload.graph, name: entry.name } }
+      // Grouped materials recompile through upsert; an EMPTY group has nothing
+      // to compile and just records the choice — main's own split.
+      if (updated.materials.length) void upsertGroup(inspectedId, updated)
+      else inspectGroupsApply(inspectedGroups.map((x) => (x.id === groupId ? updated : x)))
+    },
+    [inspectedId, inspectedGroups, inspectGroupsApply, upsertGroup],
+  )
+
+  // ── The shader-graph library and the node editor ──
+  //
+  // The panel's two deep doors, mechanism and all: a floating window whose rect
+  // persists, a session id that raises it, and a SCRATCHPAD contract on both
+  // sides. Editing a group's graph previews by WRITING the group — that is the
+  // preview — so closing has to either keep the result in the library or put the
+  // group back, or a look built here could only ever live in this one scene:
+  // invisible in the library, unusable on another group, impossible to publish.
+  const communityGraphs = useCommunity<GraphItem>("graph")
+  // Eager, unlike the other two editors': this panel stays MOUNTED while closed
+  // (see the JSX), so it needs its rect on the first render it appears in.
+  const { rect: graphPanelRect, update: updateGraphPanelRect } = useStoredRect(GRAPH_PANEL_KEY, defaultPanelRect, {
+    eager: true,
+  })
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  // Bumped per open so the panel RAISES each time. It stays mounted while
+  // closed, so without this it would only ever surface on first mount, and
+  // opening the editor from the library would leave the library on top of it.
+  const [graphSession, setGraphSession] = useState(0)
+  // An export has run this session. Not persisted: it answers "have you seen
+  // this rendered yet", which is a question about the sitting, not the document.
+  const [exportedOnce, setExportedOnce] = useState(false)
   // Publishing. A scrimmed dialog, not a panel: this is the one task where the
   // canvas is NOT what you are working on — you are naming and describing the
-  // thing you already made. Dummy for now — see DummyPublishDialog.
+  // thing you already made.
   const [shareOpen, setShareOpen] = useState(false)
+  // Graph editor filling the screen. Session state, not stored with the rect:
+  // the rect is where your window LIVES and is worth remembering, while filling
+  // the screen is something you do for one dense graph and leave behind.
+  const [graphFull, setGraphFull] = useState(false)
+  // A standalone graph-editing session: a library act, never bound to a group.
+  const [graphLibEdit, setGraphLibEdit] = useState<{
+    sessionId: number
+    id: string
+    name: string
+    opened: ShaderGraph
+    savePrompt: boolean
+  } | null>(null)
+  const graphLibLatest = useRef<ShaderGraph | null>(null)
+  /** The draft the last library edit made, so the library reopens on it. Spent
+   *  when the library closes: it answers "what did you just make", once. */
+  const [freshGraphDraft, setFreshGraphDraft] = useState<string | null>(null)
+  // What the group's graph was when the session opened, and WHOSE group it is.
+  // The model travels with it because the inspector can move to another
+  // character mid-session, and a discard has to reach the group it started on.
+  const groupGraphBaseline = useRef<{ modelId: string; groupId: string; graph: ShaderGraph } | null>(null)
+  const [groupGraphPrompt, setGroupGraphPrompt] = useState(false)
+  // Remounts the editor when the library swaps the bound group's graph underneath it.
+  const [libVersion, setLibVersion] = useState(0)
 
+  const activeGroup = inspectedGroups.find((g) => g.id === activeGroupId) ?? null
+  // The factory preset the editor's Reset returns to: the LIBRARY entry this
+  // group's graph came from, never the group's live graph — which would make
+  // Reset restore the state you were trying to leave.
+  const presetGraph = activeGroup
+    ? (GRAPH_LIBRARY.find((e) => e.name === activeGroup.graph?.name)?.payload.graph ??
+      SLOT_GRAPHS[activeGroup.id as MaterialPreset] ??
+      DEFAULT_GRAPH)
+    : null
+  /** The editor's onApply: compile the edited graph onto the bound group. This
+   *  goes through the same upsertGroup the QuickPick does, so the edit reaches
+   *  groupsByModel — which is what the debounced document save reads. */
+  const applyActiveGraph = useCallback(
+    (graph: ShaderGraph, opts?: CompileOptions): Promise<{ ok: boolean; diagnostics: Diagnostic[] }> =>
+      inspectedId && activeGroup
+        ? upsertGroup(inspectedId, { ...activeGroup, graph }, opts)
+        : Promise.resolve({ ok: false, diagnostics: [] }),
+    [inspectedId, activeGroup, upsertGroup],
+  )
+  /** Focus a group and open the node editor on it (snapshotting a baseline). */
+  const editGroupGraph = useCallback(
+    (id: string) => {
+      const g = inspectedGroups.find((x) => x.id === id)
+      if (!inspectedId || !g) return
+      groupGraphBaseline.current = { modelId: inspectedId, groupId: id, graph: structuredClone(g.graph) }
+      setActiveGroupId(id)
+      setGraphLibEdit(null)
+      setGraphSession((v) => v + 1)
+      setDrawerOpen(true)
+    },
+    [inspectedId, inspectedGroups],
+  )
+  const openGraphLibrary = useCallback((groupId: string | null) => openBrowse({ kind: "graph", groupId }), [openBrowse])
+
+  const [gallerySeen, setGallerySeen] = useState(
+    () => typeof window !== "undefined" && !!window.localStorage.getItem(GALLERY_SEEN_KEY),
+  )
+  /** Every entrance to the gallery goes through here — the logo menu, the
+   *  palette, the account panel's scene count — so "they have been" cannot be
+   *  true through one door and false through another. */
+  const openGallery = useCallback(
+    (facet: LibraryFacet = "all") => {
+      try {
+        window.localStorage.setItem(GALLERY_SEEN_KEY, "1")
+      } catch {
+        // private mode — the suggestion simply keeps offering, which is harmless
+      }
+      setGallerySeen(true)
+      openBrowse({ kind: "gallery" }, facet)
+    },
+    [openBrowse],
+  )
+
+  /** The account panel's stat rows are doors: your scenes open the gallery, your
+   *  looks open their own library already filtered to yours — which is the whole
+   *  reason the slot carries a facet. Written out per kind rather than passed
+   *  through: each variant of the union is a different shape (a graph library
+   *  knows what group it applies to), and one of them is not a library at all. */
+  const openForAccount = useCallback(
+    (kind: "grade" | "effect" | "graph" | "scene") => {
+      // "yours" for all four, including the gallery: the count you clicked was a
+      // count of YOUR scenes, so the shelf it opens has to be the same set.
+      if (kind === "scene") openGallery("yours")
+      else if (kind === "graph") openBrowse({ kind: "graph", groupId: null }, "yours")
+      else openBrowse(kind === "grade" ? { kind: "grade" } : { kind: "effect" }, "yours")
+    },
+    [openBrowse, openGallery],
+  )
+
+  // The session handlers are plain functions: nothing takes them as a
+  // dependency, and the compiler cannot preserve a manual memo across the async
+  // bodies among them anyway.
+
+  /** Your local draft that a graph name refers to — the thing an edit made from
+   *  the quick switch saves back into. */
+  const draftGraphNamed = (name: string) => loadDrafts().graph.find((d) => nameKey(d.name) === nameKey(name))
+  const freeGraphName = (wanted: string, editingId?: string) => freeName("graph", wanted, editingId)
+  /** The group a group-session is bound to, resolved through the BASELINE's
+   *  model rather than the inspector's — the inspector may have moved on. */
+  const baselineGroup = () => {
+    const base = groupGraphBaseline.current
+    const group = base ? (groupsByModel[base.modelId] ?? []).find((x) => x.id === base.groupId) : null
+    return base && group ? { base, group } : null
+  }
+  /**
+   * Closing a GROUP graph session.
+   *
+   * Unchanged closes silently. Changed asks to keep it. Editing one of YOUR
+   * drafts is not that situation — it already has a home, so it saves in place
+   * and closes; asking where to put it would mint another copy of the draft you
+   * were already editing every time you closed.
+   */
+  const closeGraphEdit = () => {
+    const hit = baselineGroup()
+    // Compared by LOOK, not bytes: merely opening the editor round-trips the
+    // graph through ReactFlow and stamps node layout onto it, so a raw compare
+    // calls every session dirty and asks to save a graph nobody touched.
+    if (!hit || sameGraphLook(hit.group.graph, hit.base.graph)) {
+      groupGraphBaseline.current = null
+      setDrawerOpen(false)
+      return
+    }
+    // By name, which IS the identity a group holds a look by.
+    const draft = draftGraphNamed(hit.group.graph.name)
+    // A save that does not compile is refused everywhere else; surfacing that
+    // needs the dialog, so fall through to it rather than keeping a dud.
+    if (draft && compileGraph(hit.group.graph).ok) {
+      updateDraft("graph", draft.id, { payload: { graph: hit.group.graph } })
+      groupGraphBaseline.current = null
+      setDrawerOpen(false)
+      return
+    }
+    setGroupGraphPrompt(true)
+  }
+  const saveGroupGraph = (wanted: string): string | null => {
+    const hit = baselineGroup()
+    if (!hit) return null
+    // Your own draft keeps its identity and its name — this is the same save the
+    // silent path does, reached only because a compile error had to be shown.
+    const keep = draftGraphNamed(hit.group.graph.name)
+    const name = keep?.name ?? freeGraphName(wanted)
+    const graph = { ...hit.group.graph, name }
+    const r = compileGraph(graph)
+    if (!r.ok) return r.diagnostics.find((d) => d.severity === "error")?.message ?? t.lab.compileFailed
+    if (keep) updateDraft("graph", keep.id, { payload: { graph } })
+    else createDraft("graph", { name, payload: { graph }, author: authorName })
+    // The group keeps it too, now under the saved name, so the scene and the
+    // library agree about what this look is called.
+    void upsertGroup(hit.base.modelId, { ...hit.group, graph })
+    groupGraphBaseline.current = null
+    setGroupGraphPrompt(false)
+    setDrawerOpen(false)
+    return null
+  }
+  const discardGroupGraph = () => {
+    const hit = baselineGroup()
+    if (hit) void upsertGroup(hit.base.modelId, { ...hit.group, graph: hit.base.graph })
+    groupGraphBaseline.current = null
+    setGroupGraphPrompt(false)
+    setDrawerOpen(false)
+  }
+
+  /** Standalone graph editing — the library's Edit. Same contract, except edits
+   *  compile PURELY: compileGraph needs no engine and no group. */
+  const openGraphLibEdit = (id: string, name: string, graph: ShaderGraph) => {
+    graphLibLatest.current = null
+    setGraphLibEdit((prev) => ({ sessionId: (prev?.sessionId ?? 0) + 1, id, name, opened: graph, savePrompt: false }))
+    setGraphSession((v) => v + 1) // raiseKey: the editor must surface above the library
+    setDrawerOpen(true)
+  }
+  const compileStandalone = (graph: ShaderGraph): Promise<{ ok: boolean; diagnostics: Diagnostic[] }> => {
+    graphLibLatest.current = graph
+    const r = compileGraph(graph)
+    // Editing your own draft saves as you go — closing it is then just closing,
+    // and a crash or a stray reload costs nothing. Only drafts: a built-in or
+    // someone else's published work has no local home to write to yet.
+    if (graphLibEdit && isDraft("graph", graphLibEdit.id))
+      updateDraftSoon("graph", graphLibEdit.id, { payload: { graph: { ...graph, name: graphLibEdit.name } } })
+    return Promise.resolve({ ok: r.ok, diagnostics: r.diagnostics })
+  }
+  const requestCloseGraphDrawer = () => {
+    if (!graphLibEdit) {
+      setDrawerOpen(false)
+      return
+    }
+    const latest = graphLibLatest.current ?? graphLibEdit.opened
+    // By LOOK, not bytes — the same compare the group path makes.
+    if (sameGraphLook(latest, graphLibEdit.opened)) {
+      setGraphLibEdit(null)
+      setDrawerOpen(false)
+      return
+    }
+    // An existing draft saves in place — unless it stopped compiling, in which
+    // case the dialog surfaces the refusal.
+    if (isDraft("graph", graphLibEdit.id) && saveGraphLibEdit(graphLibEdit.name) === null) return
+    setGraphLibEdit({ ...graphLibEdit, savePrompt: true })
+  }
+  const saveGraphLibEdit = (wanted: string): string | null => {
+    if (!graphLibEdit) return null
+    const keep = isDraft("graph", graphLibEdit.id) ? graphLibEdit.id : undefined
+    const name = freeGraphName(wanted, graphLibEdit.id)
+    const graph = { ...(graphLibLatest.current ?? graphLibEdit.opened), name }
+    const r = compileGraph(graph)
+    if (!r.ok) return r.diagnostics.find((d) => d.severity === "error")?.message ?? t.lab.compileFailed
+    if (keep) updateDraft("graph", keep, { name, payload: { graph } })
+    else
+      // Remembered so the library opens ON it. This save applies the graph to
+      // nothing — the library may have been opened with no group behind it — so
+      // without this the copy you just made is the one thing the library cannot
+      // tell you about.
+      setFreshGraphDraft(
+        createDraft("graph", {
+          name,
+          payload: { graph },
+          author: authorName,
+          ...draftOriginOf(communityGraphs, graphLibEdit.id),
+        }).id,
+      )
+    setGraphLibEdit(null)
+    setDrawerOpen(false)
+    return null
+  }
+  const discardGraphLibEdit = () => {
+    // Discard has to undo save-as-you-go, not just stop it — see discardGradeEdit.
+    if (graphLibEdit && isDraft("graph", graphLibEdit.id)) {
+      cancelDraftWrites("graph", graphLibEdit.id)
+      updateDraft("graph", graphLibEdit.id, { payload: { graph: { ...graphLibEdit.opened, name: graphLibEdit.name } } })
+    }
+    setGraphLibEdit(null)
+    setDrawerOpen(false)
+  }
+  /** Apply a library graph to the group the library was opened from. */
+  const applyGraphLibrary = (graph: ShaderGraph, name: string) => {
+    const group = inspectedGroups.find((g) => g.id === graphLib?.groupId)
+    if (!inspectedId || !group) return
+    const updated: StyleGroup = { ...group, graph: { ...graph, name } }
+    // The same split inspectPickGraph makes: grouped materials recompile through
+    // upsert, an empty group just records the choice.
+    if (updated.materials.length) void upsertGroup(inspectedId, updated)
+    else inspectGroupsApply(inspectedGroups.map((x) => (x.id === group.id ? updated : x)))
+    setActiveGroupId(group.id)
+    setLibVersion((v) => v + 1)
+    closeBrowseIf("graph")
+  }
+  // A draft renamed in the library takes the groups wearing it along. A group
+  // holds its look BY VALUE, so without this the scene goes on calling the look
+  // by a name no library has — which then reads as "not in use" and lets the
+  // draft be deleted out from under it.
+  const renameGroupLooks = useCallback(
+    (oldName: string, newName: string) => {
+      for (const [modelId, list] of Object.entries(groupsByModel)) {
+        let changed = false
+        const next = list.map((g) => {
+          if (!g.graph || nameKey(g.graph.name) !== nameKey(oldName)) return g
+          changed = true
+          return { ...g, graph: { ...g.graph, name: newName } }
+        })
+        if (changed) void applyGroups(modelId, next)
+      }
+    },
+    [groupsByModel, applyGroups],
+  )
+  // Every look the scene is wearing, across ALL models — not just the group the
+  // library was opened from. A draft one of these is built on is in use.
+  const usedLookNames = useMemo(
+    () =>
+      [
+        ...new Set(Object.values(groupsByModel).flatMap((list) => list.map((g) => g.graph?.name).filter(Boolean))),
+      ] as string[],
+    [groupsByModel],
+  )
+  const libGroup = inspectedGroups.find((g) => g.id === graphLib?.groupId) ?? null
   // ── Model upload ──
   // "Replace" is an upload too — same picker, same parsing, only the target
   // differs: a new slot, or an existing one that keeps its position and clip.
@@ -3393,6 +4314,11 @@ export default function Lab() {
         next[newId] = old
         return next
       })
+      // The inspector follows the slot, not the file. Replacing the model you
+      // had open is a continuation of editing THAT cast member, so the panel
+      // should be looking at what replaced it — and leaving the old id behind
+      // would strand the panel on a model that no longer exists.
+      setInspectedId((prev) => (prev === oldId ? newId : prev))
     },
     [loadVmdFile, loadVmdUrl, bundleFile],
   )
@@ -3460,8 +4386,9 @@ export default function Lab() {
     settings,
     camera,
     stage: stage ? { scale: stage.transform.scale, position: stage.transform.position } : null,
+    effect: effectSummary,
     planes: planeSummary,
-    gradeName: t.scene.gradePresets[settings.grade.preset as keyof typeof t.scene.gradePresets] ?? settings.grade.preset,
+    gradeName: gradeLabel(settings.grade.preset),
     backdrop: bgImage && !bgImage.dome ? bgImage.name : null,
     dome: bgImage?.dome ? bgImage.name : null,
     hdri: hdri?.name ?? null,
@@ -3507,6 +4434,25 @@ export default function Lab() {
     setPaletteOpen(true)
   }, [setPaletteOpen])
 
+  // Like counts and the gallery's first page, warmed during idle after boot —
+  // opening either should be a render, not a fetch. A short timeout as well as
+  // idle: the render loop keeps this thread busy enough that idle may never
+  // arrive on its own, and the cost of these GETs is starting them.
+  useEffect(() => {
+    const warm = () => {
+      prefetchLibraryStats()
+      prefetchGallery()
+    }
+    const idle =
+      typeof requestIdleCallback === "function"
+        ? requestIdleCallback(warm, { timeout: 1000 })
+        : window.setTimeout(warm, 800)
+    return () => {
+      if (typeof cancelIdleCallback === "function") cancelIdleCallback(idle as number)
+      else clearTimeout(idle as number)
+    }
+  }, [])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -3526,7 +4472,8 @@ export default function Lab() {
       tabs?: {
         stage?: "stage" | "ground" | "background"
         light?: "world" | "sun"
-        post?: "tone" | "bloom" | "outline"
+        camera?: "lens" | "focus"
+        post?: "grade" | "tone" | "bloom" | "outline"
       },
     ) => {
       // Not setDockExpanded: a goto opens the dock to show you somewhere, which
@@ -3539,6 +4486,7 @@ export default function Lab() {
       if (isRow) setOpenRow(target)
       if (tabs?.stage) setStageTab(tabs.stage)
       if (tabs?.light) setLightTab(tabs.light)
+      if (tabs?.camera) setCameraTab(tabs.camera)
       if (tabs?.post) setPostTab(tabs.post)
       const domId = isRow ? `layer-${target}` : target
       requestAnimationFrame(() =>
@@ -3566,9 +4514,15 @@ export default function Lab() {
       // motion, the scene still has someone standing still in it.
       if (cast.some((m) => !animByModel[m.id])) list.push("motion")
       if (!musicClip) list.push("music")
+      // Only once there is something to watch — offering to render a still
+      // model is offering a video of nothing.
+      if (cast.some((m) => animByModel[m.id]) && !exportedOnce) list.push("render")
     }
+    // Not a scene gap but a user one: open until they have been to the gallery
+    // once, whichever door they used.
+    if (!gallerySeen) list.push("discover")
     return list
-  }, [cast, models, unstyled, animByModel, musicClip])
+  }, [cast, models, unstyled, animByModel, musicClip, exportedOnce, gallerySeen])
 
   // The one row whose hint is state, not description: a toggle you reach only
   // by searching has to say which way it is currently pointing. Reads the
@@ -3657,7 +4611,7 @@ export default function Lab() {
       // persist.
       camera,
       settings,
-      backgroundEffects: bgEffects,
+      backgroundEffects: documentEffects,
       groups: groupsByModel,
       // DERIVED from the live model list rather than tracked separately.
       // Empty lists are WRITTEN, not filtered: saveSceneState's retain() merges
@@ -3903,6 +4857,11 @@ export default function Lab() {
     // and it does it once the new cast is in and can be followed.
     setCamera(next.state.camera)
     setBgEffects(next.state.backgroundEffects)
+    // The per-preset intensity memory is keyed by NAME and outlives documents, so a
+    // swapped scene has to restate its own strength — otherwise the first switch away
+    // and back would overwrite what this document says with whatever the last scene
+    // happened to use that grade at.
+    rememberIntensity(next.state.settings.grade.preset, next.state.settings.grade.intensity)
     setAnimByModel(seedAnims(next))
     setMorphByModel(seedMorphs(next))
     // The incoming document's own answer, which is "no" until it is edited: a
@@ -3931,6 +4890,22 @@ export default function Lab() {
     // .pmx under a different document) wearing the colour it had in the old scene.
     castStarted.current.clear()
     setPalettes({})
+    // The transient surfaces are all ABOUT something the swap just removed. The
+    // editors go too, baselines included: a session's "put it back" points at a
+    // group, a grade or a shader belonging to the document being replaced, and
+    // an open scratchpad would write the outgoing scene's work into the incoming
+    // one on its next close.
+    setInspectedId(null)
+    setExportOpen(false)
+    closeBrowse()
+    setDrawerOpen(false)
+    setGraphLibEdit(null)
+    setActiveGroupId(null)
+    setGroupGraphPrompt(false)
+    groupGraphBaseline.current = null
+    graphLibLatest.current = null
+    setGradeEditor(null)
+    setEffectEditor(null)
 
     await swapping
 
@@ -4079,13 +5054,20 @@ export default function Lab() {
               : { ...settings.grade, spec: appliedGradeSpec }
           })(),
         },
-        backgroundEffects: bgEffects,
+        backgroundEffects: documentEffects,
         groups: groupsByModel,
         hidden: slots.hidden,
         planes: slots.planes,
       },
       { graph: graphRef, effect: effectRef },
     )
+
+  /** What the publish dialog packs and uploads: the same slots the save path
+   *  collects, with the doc deferred until the bundle has a URL. */
+  const collectScenePublish = (): ScenePublishSource => {
+    const slots = collectLabSlots()
+    return { entries: slots.entries, makeDoc: (bundle) => makeSceneDoc(slots, bundle) }
+  }
 
   const exportScene = async () => {
     const slots = collectLabSlots()
@@ -4143,9 +5125,9 @@ export default function Lab() {
   // in a ref and are read at call time instead: the same trick use-z-order
   // plays with its Escape closers, and for the same reason — the callback is
   // long-lived, the functions are not.
-  const cmdRef = useRef({ newScene, resetSceneDefaults, exportScene })
+  const cmdRef = useRef({ newScene, resetSceneDefaults, exportScene, openGradeEditor })
   useEffect(() => {
-    cmdRef.current = { newScene, resetSceneDefaults, exportScene }
+    cmdRef.current = { newScene, resetSceneDefaults, exportScene, openGradeEditor }
   })
 
   const runCommand = useCallback(
@@ -4164,7 +5146,8 @@ export default function Lab() {
       }
       // Real commands, by id — the registry will own this table; until then the
       // page is the registry.
-      if (item.id === "add-model") {
+      if (item.id === "export" || item.id === "capture") openExport()
+      else if (item.id === "add-model") {
         // The refs directly, not pickModel: a plain function in the dep
         // array is something the compiler cannot keep memoized.
         modelTarget.current = { mode: "add" }
@@ -4215,11 +5198,32 @@ export default function Lab() {
         }
       } else if (item.id === "ground") gotoSection("stage", { stage: "ground" })
       else if (item.id === "background") gotoSection("stage", { stage: "background" })
+      else if (item.id === "effect") gotoSection("effect")
       else if (item.id === "post") gotoSection("post")
       else if (item.id === "light") gotoSection("light")
       else if (item.id === "world") gotoSection("light", { light: "world" })
       else if (item.id === "sun") gotoSection("light", { light: "sun" })
       else if (item.id === "physics") gotoSection("physics")
+      // Whichever model is already inspected, else the primary — the panel is
+      // per-model and picking one for you beats opening on nothing.
+      // `inspected?.id`, NOT inspectedId: a replaced model leaves the raw id
+      // naming something that is gone, and openMaterials short-circuits when the
+      // id it is handed is the one already held — so passing the stale one back
+      // in set it to itself, resolved to no model, and the panel could never be
+      // opened again. Going through the RESOLVED model means a stale id falls
+      // through to the first cast member instead of wedging.
+      else if (item.id === "materials") openMaterials(inspected?.id ?? models[0]?.id ?? null)
+      // Each opens exactly what it says. A new draft starts from the same
+      // template the library's own New button uses, so the two doors lead to
+      // one place.
+      else if (item.id === "graph-new") openGraphLibEdit("", t.library.newGraph, structuredClone(DEFAULT_GRAPH))
+      else if (item.id === "graph-lib") openGraphLibrary(activeGroupId)
+      else if (item.id === "wgsl-new")
+        openEffectEditor({ id: "", name: t.effectLibrary.newEffect, wgsl: NEW_EFFECT_TEMPLATE })
+      else if (item.id === "effect-lib") openBrowse({ kind: "effect" })
+      else if (item.id === "grade-new")
+        cmdRef.current.openGradeEditor({ id: "", name: t.gradeLibrary.newGrade, spec: NEW_GRADE_SPEC })
+      else if (item.id === "grade-lib") openBrowse({ kind: "grade" })
       else if (item.id === "outline") patch("outline", { enabled: !outlineRef.current })
       // Nothing to undo and nothing to store: the bodies are re-seeded onto the
       // pose they are already in, and the next frame simulates forward from
@@ -4232,10 +5236,14 @@ export default function Lab() {
       else if (item.id === "edit-camera") editClipRef.current(clipTargetRef.current, "camera")
       else if (item.id === "language") setLangOpen(true)
       else if (item.id === "look") setStyleOpen(true)
+      // The same dialog the Share pill opens — one publish surface, two doors.
+      else if (item.id === "publish") setShareOpen(true)
+      else if (item.id === "gallery") openGallery()
       else if (item.id.startsWith("ctl-")) {
         const c = DOCK_CONTROLS.find((x) => `ctl-${x.id}` === item.id)
         if (!c) return
-        gotoSection(c.row, { stage: c.stageTab, light: c.lightTab, post: c.postTab })
+        if (c.row === "export") openExport()
+        else gotoSection(c.row, { stage: c.stageTab, light: c.lightTab, camera: c.cameraTab, post: c.postTab })
       }
       item.run?.()
     },
@@ -4246,11 +5254,22 @@ export default function Lab() {
       t,
       recentIds,
       gotoSection,
+      openMaterials,
+      // The RESOLVED id, not the raw one — the raw id can name a model that has
+      // been replaced away, and this callback must re-make itself when the
+      // resolution changes, not when the stale string happens to.
+      inspected?.id,
       models,
       lyricsClip,
       generateLipSync,
       patch,
       setLangOpen,
+      openExport,
+      openGraphLibrary,
+      openBrowse,
+      openGallery,
+      activeGroupId,
+      openEffectEditor,
       // A ref object, so it never changes and costs this memo nothing — listed
       // because reset-physics reaches through it and the rule here is that
       // everything read is named.
@@ -4263,7 +5282,9 @@ export default function Lab() {
       className="relative h-dvh w-screen overflow-hidden select-none"
       // The scene's own colour, so the ground under the canvas is the colour the
       // canvas is about to paint — no flash from a chrome default to the scene on
-      // first load.
+      // first load. A compositing handoff keeps the neutral: green and alpha are
+      // read THROUGH, and tinting what shows around the framed rect would bias the
+      // judgement the mode exists to support.
       //
       // Gated on `mounted` for the reason the audio element's src is: the scene
       // comes from storage the server cannot read, so the first client pass has
@@ -4272,7 +5293,11 @@ export default function Lab() {
       // exactly what <body> carries — the two agree, and the restored scene's own
       // colour lands a tick later.
       style={{
-        backgroundColor: !mounted ? DEFAULT_SCENE.state.settings.background.color : settings.background.color,
+        backgroundColor: !mounted
+          ? DEFAULT_SCENE.state.settings.background.color
+          : isCompositingBackground(framing.liveBackground)
+            ? "#000"
+            : settings.background.color,
       }}
     >
       {/* Full bleed, always. Chrome floats over it; nothing ever shrinks the
@@ -4281,19 +5306,37 @@ export default function Lab() {
           framed rect. Without it the empty alpha reads as a black background,
           which is the one thing it is not — and the difference between "the
           shot is dark" and "the shot is a hole" is the whole point of the mode. */}
+      {framing.liveBackground === "alpha" && (
+        <div
+          className={cn("absolute", !frameRect && "inset-0 h-full w-full")}
+          style={{ ...frameStyle, ...CHECKERBOARD }}
+        />
+      )}
       {backdropInShot && bgImage.kind === "image" && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={bgImage.url} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        <img
+          src={bgImage.url}
+          alt=""
+          className={cn("absolute object-cover", !frameRect && "inset-0 h-full w-full")}
+          style={frameStyle}
+        />
       )}
       {/* A gif/webp/apng, painted per frame by the clip's clock. */}
       {backdropInShot && mediaBackdrop.moving && (
-        <canvas ref={mediaBackdrop.canvasRef} className="absolute inset-0 h-full w-full object-cover" />
+        <canvas
+          ref={mediaBackdrop.canvasRef}
+          className={cn("absolute object-cover", !frameRect && "inset-0 h-full w-full")}
+          style={frameStyle}
+        />
       )}
       {/* A video, played natively — the compositor handles the frames, which is
           what holds 4K60. muted is not a preference: a backdrop is picture, its
           own soundtrack would play under the scene's music, and muted is also
           what lets it start without a user gesture. playsInline keeps iOS from
-          taking it fullscreen. */}
+          taking it fullscreen.
+
+          Same slot, same object-cover and same frameStyle as the other two, so
+          changing the export aspect reframes all of them identically. */}
       {backdropInShot && bgImage.kind === "video" && (
         <video
           key={bgImage.url}
@@ -4303,16 +5346,15 @@ export default function Lab() {
           loop
           playsInline
           preload="auto"
-          className="absolute inset-0 h-full w-full object-cover"
+          className={cn("absolute object-cover", !frameRect && "inset-0 h-full w-full")}
+          style={frameStyle}
         />
       )}
       <canvas
         ref={canvasRef}
-        onClick={pickAt}
-        onDoubleClick={deselectAt}
-        onPointerMove={hoverAt}
-        onPointerLeave={clearHover}
-        className="absolute inset-0 h-full w-full touch-none object-contain"
+        onClick={pickBoneAt}
+        className={cn("absolute touch-none object-contain", !frameRect && "inset-0 h-full w-full")}
+        style={frameStyle}
       />
 
       {/* The same pill the viewer shows, for the same load — opening a scene
@@ -4326,19 +5368,49 @@ export default function Lab() {
         </div>
       )}
 
+      {frameRect && (
+        <div className="pointer-events-none absolute inset-0 z-10">
+          {/* No scrim any more. It existed to dim the parts of a full-bleed
+              canvas that would not be exported, and there are no such parts:
+              the canvas IS the frame. What surrounds it is the editor's own
+              ground, which needs no dimming to read as not-the-shot. */}
+          {/* Capture-tool convention: amber = framed (composing), red = recording. */}
+          <div
+            className={cn(
+              "absolute rounded-sm border",
+              framing.exporting ? "border-red-500/90" : "border-amber-400/80",
+            )}
+            style={{ left: frameRect.x, top: frameRect.y, width: frameRect.w, height: frameRect.h }}
+          />
+          {/* The watermark, WHERE the export will put it — same layout maths as
+              drawWatermark in lib/video-export.ts (size h·0.028, pad h·0.024)
+              and the engine demo's own type style, so what you frame is what you
+              get. Keep the two in step. */}
+          {framing.activeFrame?.watermark && (
+            <div
+              className="absolute font-sans text-white/90 uppercase"
+              style={{
+                left: frameRect.x + frameRect.h * 0.024,
+                top: frameRect.y + frameRect.h * 0.024,
+                fontSize: Math.max(14, Math.round(frameRect.h * 0.028)),
+                lineHeight: 1,
+                fontWeight: 400,
+                letterSpacing: "0.3em",
+                textShadow: "0 0 0.83em rgba(255,255,255,0.3), 0 0.083em 0.42em rgba(0,0,0,0.5)",
+              }}
+            >
+              Reze Build
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Top bar ──
           Right cluster only. The brand belongs to the stack while the stack is
           open — the brand block's own header/collapsed split, which is also what
           stops a pill and a panel of different widths sitting on top of each
           other. */}
       {mounted && (
-        <>
-        {/* Centred independently of the two side pills — it does not take part
-            in their flex row, so a wider search bar or a longer model name
-            never pushes it off centre. */}
-        <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2">
-          <ModeToolbar mode={openModelRow} onPick={setOpenModelRow} />
-        </div>
         <div className="pointer-events-none absolute top-3 right-3 left-3 flex items-start gap-2">
           {/* Same 17rem as the open panel: this is a DROPDOWN, not a sidebar —
             expanding only grows downward, so nothing ever shifts sideways. */}
@@ -4349,6 +5421,7 @@ export default function Lab() {
                   the only door to the file operations. */}
               <SceneFileMenu
                 onNew={newScene}
+                onGallery={openGallery}
                 onExport={exportScene}
                 onImport={importScene}
                 onReset={resetSceneDefaults}
@@ -4390,15 +5463,18 @@ export default function Lab() {
               hand the panels a pixel value. Fixing the column and letting the
               pills fill it is the same alignment with none of the arithmetic,
               and nothing to re-derive when a label is translated or the account
-              slot changes.
+              chip changes with sign-in state.
 
-              The palette takes the slack (flex-1) rather than the account pill,
-              so a wider search pill is just a wider search pill instead of
-              opening a hole between the avatar and Share.
+              The palette takes the slack (flex-1) rather than the account pill:
+              slack inside that pill would open a hole between the avatar and
+              Share, while a wider search pill is just a wider search pill. It
+              lands at 10.75rem, a quarter of a rem off the width it was hand-set
+              to — which is the check that the number was right.
 
-              All pills state h-10 rather than deriving it from contents — a
-              control with a different variant height would otherwise silently
-              disagree with the panels it is meant to line up under. */}
+              All pills state h-10 rather than deriving it from contents. Derived
+              heights agreed only while every pill happened to hold size-7
+              children — one control with a different variant height and they
+              silently disagree, which is exactly what happened here. */}
           <div className="ml-auto flex w-[16rem] items-start gap-2">
             {/* The palette needs a visible door — keyboard-only would hide it
                 from exactly the people most likely to miss it, and it is the
@@ -4441,10 +5517,15 @@ export default function Lab() {
             </Button>
 
             <div className={cn(PILL, "pointer-events-auto flex h-10 shrink-0 items-center gap-2 px-1.5")}>
-              <AccountPlaceholder />
+              <AccountButton onOpenLibrary={openForAccount} />
               <Button
                 size="sm"
                 onClick={() => setShareOpen(true)}
+                // Sized to its label with tight padding, rather than to a
+                // hand-set 3.75rem. Every pixel it gives up goes to the palette
+                // beside it — that is the only flex-1 in a cluster fixed at
+                // 16rem — so the pair still measures exactly what it did, with
+                // more of it spent on the control that has words to show.
                 className="h-7 shrink-0 rounded-lg bg-blue-400 px-2 text-xs font-medium text-white hover:bg-blue-300"
               >
                 {t.lab.share}
@@ -4452,7 +5533,6 @@ export default function Lab() {
             </div>
           </div>
         </div>
-        </>
       )}
 
       {/* Which .pmx, or why it failed — the shipped editor's dialog, reused
@@ -4513,13 +5593,15 @@ export default function Lab() {
             doc={pmxDoc}
             bone={pickedBone}
             material={pickedMaterial}
-            materialStyle={pickedMaterialStyle}
             files={bundleFiles()}
             baseDir={castDir}
             onEditBone={editBone}
             onEditMaterial={editMaterial}
-            closeLabel={t.lab.closePmxInspector}
-            onClose={closePmxInspector}
+            closeLabel={t.lab.closeMaterials}
+            onClose={() => {
+              setPickedBone(null)
+              setPickedMaterial(null)
+            }}
           />
         </Surface>
       )}
@@ -4818,6 +5900,258 @@ export default function Lab() {
         }}
       />
 
+      {/* All three take `initialFacet` from the slot, so an entrance that means
+          "show me mine" arrives on that shelf. closeIf, never close: a stale
+          onOpenChange(false) from the library that just LOST the slot would
+          otherwise close its replacement. */}
+      <GradeLibrary
+        open={gradeLibOpen}
+        initialFacet={libraryFacet}
+        onOpenChange={(o) => !o && closeBrowseIf("grade")}
+        grade={grade}
+        onApplyPreset={pickGrade}
+        onRenamed={(oldName, newName) =>
+          setSettings((s2) => (s2.grade.preset === oldName ? { ...s2, grade: { ...s2.grade, preset: newName } } : s2))
+        }
+        onEdit={openGradeEditor}
+      />
+
+      <EffectLibrary
+        open={effectLibOpen}
+        initialFacet={libraryFacet}
+        onOpenChange={(o) => !o && closeBrowseIf("effect")}
+        applied={bgEffects}
+        // Applying from the library APPENDS, and applying what is already on
+        // takes it off — the same membership rule as the dock's picker, since
+        // they are two doors onto one list.
+        onApply={(e) =>
+          setBgEffects((list) => {
+            if (replaceTarget !== null) {
+              const next = [...list]
+              next[replaceTarget] = e
+              setReplaceTarget(null)
+              return next
+            }
+            return list.some((x) => x.id === e.id) ? list.filter((x) => x.id !== e.id) : [...list, e]
+          })
+        }
+        onRemove={(id) => setBgEffects((list) => list.filter((e) => e.id !== id))}
+        onRenamed={(oldName, newName) =>
+          setBgEffects((list) => list.map((e) => (e.name === oldName ? { ...e, name: newName } : e)))
+        }
+        onEdit={openEffectEditor}
+      />
+
+      {/* ── Shader-graph library ──
+          Non-modal and no scrim, like the other two: the canvas behind it is
+          the preview for everything it applies. */}
+      <NodeLibrary
+        open={graphLib !== null}
+        initialFacet={libraryFacet}
+        freshDraftId={freshGraphDraft}
+        onOpenChange={(o) => {
+          if (o) return
+          closeBrowseIf("graph")
+          // Spent on close, not on open: the library reads it while mounting, and
+          // clearing it any earlier would select the original again.
+          setFreshGraphDraft(null)
+        }}
+        canApply={libGroup !== null}
+        targetLabel={libGroup ? groupLabel(libGroup) : null}
+        currentGraphName={libGroup?.graph.name ?? null}
+        usedNames={usedLookNames}
+        onRenamed={renameGroupLooks}
+        onApply={applyGraphLibrary}
+        onEdit={openGraphLibEdit}
+      />
+
+      {/* ── Node editor ──
+          MOUNTED while closed, the shipped editor's own call: the panel owns its
+          rect and its place in the stack, and remounting it per open would drop
+          both. The BODY is what unmounts, so a session never resumes on the
+          previous graph's nodes. */}
+      {mounted && graphPanelRect && (
+        <FloatingPanel
+          rect={graphPanelRect}
+          onRectChange={updateGraphPanelRect}
+          raiseKey={graphSession}
+          // Gated on open: an ungated closer would sit at the top of the stack
+          // while invisible and swallow Escape from the libraries beneath it.
+          onEscape={drawerOpen ? requestCloseGraphDrawer : undefined}
+          fullscreen={graphFull}
+          className={cn(
+            // The raised surface, opaque: this floats over an animating canvas,
+            // which is exactly when a backdrop-filter costs the most frames.
+            "overflow-hidden rounded-surface border border-line-strong bg-surface-raised shadow-float transition-opacity duration-300",
+            !drawerOpen && "pointer-events-none opacity-0",
+          )}
+        >
+          {!drawerOpen ? null : graphLibEdit ? (
+            <GraphEditor
+              key={`lib-${graphLibEdit.sessionId}`}
+              slotLabel={graphLibEdit.name}
+              presetGraph={graphLibEdit.opened}
+              getInitialGraph={() => graphLibEdit.opened}
+              onApply={compileStandalone}
+              engineReady={ready}
+              engineError={error}
+              open={drawerOpen}
+              onClose={requestCloseGraphDrawer}
+              fullscreen={graphFull}
+              onToggleFullscreen={() => setGraphFull((v) => !v)}
+            />
+          ) : activeGroup && presetGraph ? (
+            <GraphEditor
+              key={`${activeGroup.id}-${libVersion}`}
+              slotLabel={activeGroup.graph.name || groupLabel(activeGroup)}
+              presetGraph={presetGraph}
+              getInitialGraph={() => activeGroup.graph ?? presetGraph}
+              onApply={applyActiveGraph}
+              engineReady={ready}
+              engineError={error}
+              open={drawerOpen}
+              onClose={closeGraphEdit}
+              fullscreen={graphFull}
+              onToggleFullscreen={() => setGraphFull((v) => !v)}
+            />
+          ) : (
+            // Reachable by moving the inspector to another character mid-session
+            // — the binding is released, and the panel says so rather than
+            // vanishing under the cursor.
+            <div className="relative flex h-full items-center justify-center text-xs text-muted-foreground">
+              {t.editor.selectMaterial}
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={t.library.close}
+                className="absolute top-1 right-2 size-7 text-muted-foreground hover:text-foreground"
+                onClick={() => setDrawerOpen(false)}
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+          )}
+        </FloatingPanel>
+      )}
+
+      {/* ── Floating WGSL editor (drag it aside; the scene is the preview) ── */}
+      {mounted && effectEditor && (
+        <WgslEditorPanel
+          open
+          sessionId={effectEditor.sessionId}
+          rect={effectPanelRect}
+          onRectChange={updateEffectPanelRect}
+          title={effectEditor.subject.name}
+          initial={effectEditor.subject.wgsl}
+          onCompile={(wgsl) => commitEffectCode(effectEditor.subject, wgsl)}
+          onClose={(code) => void requestCloseEffectEditor(code)}
+        />
+      )}
+
+      {/* ── Floating grade editor (drag it aside; the scene is the preview) ── */}
+      {mounted && gradeEditor && (
+        <GradeEditorPanel
+          open
+          sessionId={gradeEditor.sessionId}
+          rect={gradePanelRect}
+          onRectChange={updateGradePanelRect}
+          subject={gradeEditor.subject}
+          origin={gradeAncestor(gradeEditor.subject)}
+          onChange={editGrade}
+          onClose={requestCloseGradeEditor}
+        />
+      )}
+
+      {/* ── Save-on-close, one per editor. All three read the same at a glance:
+              a draft is being saved back and is not renamed; anything else is
+              becoming a new item and gets a free name to confirm. ── */}
+      {mounted && effectEditor?.savePrompt != null && (
+        <SaveCloseDialog
+          defaultName={freeEffectName(effectEditor.subject.name, effectEditor.subject.id)}
+          askName={!isDraft("effect", effectEditor.subject.id)}
+          onSave={saveEffectEdit}
+          onDiscard={discardEffectEdit}
+          onCancel={() => setEffectEditor((prev) => (prev ? { ...prev, savePrompt: null } : prev))}
+        />
+      )}
+      {mounted && gradeEditor?.savePrompt && (
+        <SaveCloseDialog
+          askName={!isDraft("grade", gradeEditor.subject.id)}
+          defaultName={freeGradeName(gradeEditor.subject.name, gradeEditor.subject.id)}
+          onSave={saveGradeEdit}
+          onDiscard={discardGradeEdit}
+          onCancel={() => setGradeEditor((prev) => (prev ? { ...prev, savePrompt: false } : prev))}
+        />
+      )}
+      {mounted && groupGraphPrompt && (
+        <SaveCloseDialog
+          // Your own draft is not being named, it is being saved back — this
+          // dialog is here only because the compile failed.
+          askName={!draftGraphNamed(activeGroup?.graph.name ?? "")}
+          defaultName={
+            draftGraphNamed(activeGroup?.graph.name ?? "")?.name ??
+            freeGraphName(activeGroup?.graph.name ?? t.lab.newGroup)
+          }
+          onSave={saveGroupGraph}
+          onDiscard={discardGroupGraph}
+          onCancel={() => setGroupGraphPrompt(false)}
+        />
+      )}
+      {mounted && graphLibEdit?.savePrompt && (
+        <SaveCloseDialog
+          defaultName={freeGraphName(graphLibEdit.name, graphLibEdit.id)}
+          askName={!isDraft("graph", graphLibEdit.id)}
+          onSave={saveGraphLibEdit}
+          onDiscard={discardGraphLibEdit}
+          onCancel={() => setGraphLibEdit((prev) => (prev ? { ...prev, savePrompt: false } : prev))}
+        />
+      )}
+
+      {/* ── Publishing ──
+          Mounted under `mounted` like the rest of the chrome: it reads drafts
+          and the session, both client-only. The handle dialog opens itself the
+          first time a signed-in user has a handle they have not claimed —
+          which publishing is exactly when they need to. */}
+      {mounted && (
+        <ShareSceneDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          sceneId={scene.state.id}
+          sceneName={sceneName}
+          onRename={setSceneName}
+          // The scene is up; the gallery is where it landed. Closing first, or
+          // the browse surface opens underneath a dialog still sitting on it.
+          onGallery={() => {
+            setShareOpen(false)
+            openGallery()
+          }}
+          collect={collectScenePublish}
+          // Looks worn by this scene that exist in no library: publishing is
+          // blocked while any remain, since a published scene cannot point at a
+          // draft that only exists on this device.
+          unpublished={() =>
+            unpublishedUses({
+              gradeSpec: appliedGradeSpec,
+              gradeName: settings.grade.preset,
+              effects: bgEffects,
+              groups: groupsByModel,
+            })
+          }
+        />
+      )}
+      {mounted && <HandleDialog />}
+
+      {/* ── The gallery ──
+          In the same slot as the libraries, deliberately: it is a full-window
+          browse surface too, and it must never sit behind one. It is NOT a tab
+          among them, though — a library lends a look to the scene you are
+          making, the gallery leaves it for someone else's. */}
+      <SceneGallery
+        open={galleryOpen}
+        initialFacet={libraryFacet}
+        onOpenChange={(o) => !o && closeBrowseIf("gallery")}
+      />
+
       <CommandPalette
         key={paletteSession}
         open={paletteOpen}
@@ -4827,8 +6161,6 @@ export default function Lab() {
         gaps={paletteGaps}
         onRun={runCommand}
       />
-
-      <DummyPublishDialog open={shareOpen} onOpenChange={setShareOpen} />
 
       {/* ── The stack ── */}
       {mounted && expanded && (
@@ -4860,6 +6192,7 @@ export default function Lab() {
             <div className="flex items-center gap-1.5 py-1.5 pr-1.5 pl-2">
               <SceneFileMenu
                 onNew={newScene}
+                onGallery={openGallery}
                 onExport={exportScene}
                 onImport={importScene}
                 onReset={resetSceneDefaults}
@@ -4966,10 +6299,14 @@ export default function Lab() {
                 // at three models.
                 <div
                   key={m.id}
-                  // Not a button: a bone or material is picked in the viewport
-                  // or from the row's own Bones/Materials list, not by clicking
-                  // the cast row.
-                  className="flex h-8 items-center gap-2.5 px-4 transition-colors"
+                  // Not a button: materials open from the palette alone, so a
+                  // whole-row click target would promise an edit surface the
+                  // row does not own. The tint still marks which model the
+                  // open panel is editing.
+                  className={cn(
+                    "flex h-8 items-center gap-2.5 px-4 transition-colors",
+                    inspectedId === m.id && "bg-white/[0.06]",
+                  )}
                 >
                   {palettes[m.id] ? (
                     <CastSwatch palette={palettes[m.id]} />
@@ -5008,17 +6345,6 @@ export default function Lab() {
               {Array.from({ length: pendingCast }, (_, i) => (
                 <CastRowSkeleton key={`pending-${i}`} />
               ))}
-              {/* The file's own description, right under the row it describes
-                  rather than behind a section — it is a fact about the model,
-                  not a category of edit. Only once a document is actually
-                  loaded: an empty cast has no comment field to show. */}
-              {pmxDoc && (
-                <ModelDescription
-                  value={pmxDoc.comment}
-                  placeholder={t.lab.modelDescription}
-                  onCommit={(v) => editModelInfo({ comment: v })}
-                />
-              )}
               {/* Always standing, under the rows. It was a hover-only + on the
                   group label back when one model was the normal scene; a cast is
                   something people keep adding to, and the button you use again
@@ -5041,7 +6367,6 @@ export default function Lab() {
                       empty={t.lab.noModel}
                       picked={pickedMaterial}
                       onPick={setPickedMaterial}
-                      onHover={hoverMaterialRow}
                     />
                   ) : row.id === "bones" ? (
                     <ItemPicker
@@ -5135,8 +6460,10 @@ export default function Lab() {
                           ? // Nothing, not "None": an empty row already reads as
                             // empty, and a word restating it is furniture.
                             (planeSummary ?? undefined)
-                          : l.id === "post"
-                              ? (t.scene.gradePresets[grade.preset as keyof typeof t.scene.gradePresets] ?? grade.preset)
+                          : l.id === "effect"
+                            ? (effectSummary ?? undefined)
+                            : l.id === "post"
+                              ? gradeLabel(grade.preset)
                               : undefined
                   }
                   open={openRow === l.id}
@@ -5207,6 +6534,210 @@ export default function Lab() {
                           own Effect row — it is no longer background-only. */}
 
                     </Tabs>
+                  ) : l.id === "effect" ? (
+                    // A list, not a value: the rows below are what the scene
+                    // wears, and the control above them adds to it.
+                    <>
+                      {/* The two doors, side by side and equal: the shortlist
+                          you add from, and the library you go to when the
+                          shortlist has not got it. Both are ACTIONS, so both
+                          wear a button's clothes — solid bordered, distinct
+                          from the rows they put things into. The picker still
+                          holds MEMBERSHIP: every applied effect ticks, and a
+                          ticked row clicks off. */}
+                      <div className="flex items-center gap-1.5">
+                        <QuickPick
+                          value={null}
+                          applied={bgEffects.map((e) => e.name)}
+                          items={effectItems}
+                          onPick={pickEffect}
+                          onBrowse={() => openBrowse({ kind: "effect" })}
+                          placeholder={t.lab.ctl.none}
+                          trigger={
+                            <button className="flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground ring-1 ring-line-strong transition-colors hover:text-blue-400 hover:ring-blue-400/50">
+                              <Plus className="size-3.5 shrink-0" />
+                              <span className="truncate">{t.lab.ctl.selectEffect}</span>
+                            </button>
+                          }
+                        />
+                        {/* The library keeps the white pill every library door
+                            in the app wears — the three doors are told apart by
+                            what they NAME, and a door that changed its clothes
+                            in one row would stop reading as the same kind of
+                            place. It sits second: adding from the shortlist is
+                            the common move, the library is where you go when
+                            the shortlist has not got it. */}
+                        <button
+                          onClick={() => openBrowse({ kind: "effect" })}
+                          className="flex flex-1 cursor-pointer items-center justify-center gap-1 rounded-md bg-white px-2 py-1 text-xs font-medium text-zinc-900 transition-colors hover:bg-white/90"
+                        >
+                          <Sparkles className="size-3.5 shrink-0" />
+                          <span className="truncate">{t.lab.cmd.effectLib}</span>
+                        </button>
+                      </div>
+                      {/* Every applied effect gets a row, from the first one:
+                          the row is where an effect is edited, swapped and
+                          removed, and a picker cannot hold three of those for
+                          three effects.
+
+                          Order still IS the composition — a full-cover backdrop
+                          drawn last erases what is under it — so the list shows
+                          it. Changing it is delete-and-add-again rather than
+                          arrows: replace covers the common case of wanting a
+                          different effect in the same place, which is most of
+                          what reordering was used for.
+
+                          TOPMOST FIRST, so the list is reversed against the
+                          document: the document draws in array order, so its
+                          LAST entry is the one nearest the viewer, and that is
+                          the one a layer stack puts at the top. Rendering the
+                          array as-is would have shown the backdrop above the
+                          things drawn over it, and then "up" would have had to
+                          mean down. */}
+                      {bgEffects.length > 0 && (
+                        <div className="mt-2 flex flex-col">
+                          {[...bgEffects].reverse().map((e, r) => {
+                            const i = bgEffects.length - 1 - r
+                            return (
+                              <CastLine
+                                key={e.uid ?? e.id}
+                                reserve="pr-16"
+                                text={
+                                  // Clicking the NAME opens this effect's strip
+                                  // below the list — the same arrangement the
+                                  // cards use, where the row is the handle and
+                                  // the controls sit under the set of them.
+                                  // Clicking the open one closes it, so the
+                                  // list can go back to being just a list.
+                                  <button
+                                    onClick={() => setSelectedEffect((cur) => (cur === e.uid ? null : (e.uid ?? null)))}
+                                    title={e.name}
+                                    className={cn(
+                                      "min-w-0 flex-1 cursor-pointer truncate text-left text-xs transition-colors",
+                                      selectedEffect === e.uid ? "text-blue-400" : "hover:text-foreground",
+                                    )}
+                                  >
+                                    {e.name}
+                                  </button>
+                                }
+                                actions={
+                                  <>
+                                    <CastAction
+                                      icon={PenLine}
+                                      label={t.lab.aria.editEffect(e.name)}
+                                      onClick={() => openEffectEditor(e)}
+                                    />
+                                    {/* Swapping is a CHOICE, so it offers the
+                                        choices: the same shortlist the add
+                                        control uses, in place, with the current
+                                        effect ticked. Sending this to the
+                                        library meant a full-screen surface, a
+                                        search field and a grid of cards to
+                                        answer "the other one" — and the library
+                                        is still one row down in the popover for
+                                        when the shortlist has not got it. */}
+                                    <QuickPick
+                                      value={e.name}
+                                      items={effectItems}
+                                      onPick={(name) => replaceEffectAt(i, name)}
+                                      onBrowse={() => {
+                                        setReplaceTarget(i)
+                                        openBrowse({ kind: "effect" })
+                                      }}
+                                      placeholder={t.lab.ctl.none}
+                                      trigger={
+                                        <button
+                                          aria-label={t.lab.aria.replaceEffect(e.name)}
+                                          // stopPropagation for the same reason
+                                          // CastAction does it: the row selects
+                                          // on click, and swapping must not also
+                                          // inspect. Styled to match CastAction
+                                          // rather than reusing it — Radix needs
+                                          // a trigger that forwards a ref.
+                                          onClick={(ev) => ev.stopPropagation()}
+                                          className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-chip text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground"
+                                        >
+                                          <RefreshCw className="size-3.5" />
+                                        </button>
+                                      }
+                                    />
+                                    <CastAction
+                                      icon={X}
+                                      danger
+                                      label={t.lab.aria.removeEffect(e.name)}
+                                      // BY INSTANCE. Filtering on id took every
+                                      // copy of the effect with it.
+                                      onClick={() => setBgEffects((list) => list.filter((x) => x.uid !== e.uid))}
+                                    />
+                                  </>
+                                }
+                              />
+                            )
+                          })}
+                        </div>
+                      )}
+                      {/* The selected effect's own controls, under the set of
+                          rows rather than inside one: a strip is four lines,
+                          and four lines opening INSIDE a list pushes every row
+                          below it down the panel. Under the list, the rows stay
+                          where they are and only the space beneath changes. */}
+                      {(() => {
+                        const fx = bgEffects.find((e) => e.uid === selectedEffect)
+                        if (!fx?.uid) return null
+                        const uid = fx.uid
+                        const lane = fx.window ?? []
+                        // The SELECTED firing's blend. A lane can hold several,
+                        // and they do not have to enter the same way — a hit
+                        // that cuts in on the beat and eases out is one strip,
+                        // the same effect landing softly later is another.
+                        const i = selectedStrip
+                        const w = i !== null ? lane[i] : undefined
+                        return (
+                          <div className="mt-3.5 border-t border-line pt-3">
+                            {/* HOW MUCH, always — an effect can be dialled
+                                down without being scheduled, and the blends
+                                below ramp toward this rather than toward full.
+                                One dial for both cases instead of two that can
+                                disagree. */}
+                            <SliderRow
+                              label={t.lab.ctl.influence}
+                              value={fx.influence ?? 1}
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              onChange={(v) => patchEffect(uid, { influence: v })}
+                              fmt={(v) => `${Math.round(v * 100)}%`}
+                            />
+                            {/* WHERE it plays is not here — it is the bar on
+                                this effect's row in the timeline, which is the
+                                axis the music is on and the only place putting
+                                it on a beat is a thing you can do. What stays
+                                is what the strip is LIKE, which is the division
+                                Blender draws: you drag an NLA strip in the
+                                editor and set its blend in the sidebar, never
+                                on the strip itself. */}
+                            {w !== undefined && i !== null && (
+                              <SpanRow
+                                label={t.lab.ctl.blend}
+                                a={w.blendIn ?? 0}
+                                b={w.blendOut}
+                                sep="/"
+                                onA={(v) =>
+                                  patchEffect(uid, {
+                                    window: lane.map((x, j) => (j === i ? { ...x, blendIn: v } : x)),
+                                  })
+                                }
+                                onB={(v) =>
+                                  patchEffect(uid, {
+                                    window: lane.map((x, j) => (j === i ? { ...x, blendOut: v } : x)),
+                                  })
+                                }
+                              />
+                            )}
+                          </div>
+                        )
+                      })()}
+                    </>
                   ) : l.id === "plane" ? (
                     <>
                       {/* Make it work first: one upload, one card, sliders for
@@ -5438,8 +6969,12 @@ export default function Lab() {
                   ) : l.id === "post" ? (
                     // The two passes the camera applies to a finished frame,
                     // one per tab — the same shape Environment and Light use.
+                    // Grade leads: it is the one every scene touches.
                     <Tabs value={postTab} onValueChange={(v) => setPostTab(v as typeof postTab)}>
                       <TabsList className="-mt-1 mb-2 w-full">
+                        <TabsTrigger value="grade" className="flex-1">
+                          {t.lab.tabs.grade}
+                        </TabsTrigger>
                         <TabsTrigger value="tone" className="flex-1">
                           {t.lab.tabs.tone}
                         </TabsTrigger>
@@ -5450,6 +6985,67 @@ export default function Lab() {
                           {t.lab.tabs.outline}
                         </TabsTrigger>
                       </TabsList>
+                      <TabsContent value="grade">
+                        {/* Main's own selection model, whole: quick-switch on the
+                            value text (built-ins · community · your drafts), the
+                            full library behind a Browse row at the BOTTOM of the
+                            body rather than on the section header — and no
+                            "Browse all…" inside the quick list, because a door
+                            two lines under another door is clutter. */}
+                        <div className="flex min-w-0 items-center justify-between gap-2">
+                          <span className="shrink-0 text-xs">{t.lab.ctl.preset}</span>
+                          <QuickPick
+                            // The RAW name, not the translated one: QuickPick
+                            // marks the active row with id === value, and ids
+                            // are the document's names. The trigger still shows
+                            // the translation — it renders the matched item's
+                            // label, with the placeholder covering a grade the
+                            // list does not hold.
+                            value={grade.preset}
+                            items={gradeItems}
+                            onPick={pickGrade}
+                            // Always available: a scene is always wearing SOME
+                            // grade, Neutral included, and editing Neutral is
+                            // how a look gets made from nothing.
+                            onEdit={editCurrentGrade}
+                            editLabel={t.gradeLibrary.edit}
+                            onBrowse={() => openBrowse({ kind: "grade" })}
+                            placeholder={gradeLabel(grade.preset)}
+                          />
+                        </div>
+                        {/* Intensity is remembered PER grade, so switching looks
+                            restores the strength you last used. Neutral is
+                            identity — nothing to scale. */}
+                        <div className={cn("mt-1", grade.preset === "Neutral" && "pointer-events-none opacity-40")}>
+                          <SliderRow
+                            label={t.lab.ctl.intensity}
+                            value={grade.intensity}
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            onChange={(v) => {
+                              patch("grade", { intensity: v })
+                              rememberIntensity(grade.preset, v)
+                            }}
+                            fmt={(v) => v.toFixed(2)}
+                          />
+                        </div>
+                        {/* Main's own library-door pill, centred as the body's
+                            deliberate final action. It NAMES the library it
+                            opens, in the palette's words: three doors that all
+                            said "Library" left position as the only thing
+                            telling them apart, and a door you identify by where
+                            you are standing is one you can open by mistake. */}
+                        <div className="mt-2.5 flex justify-center">
+                          <button
+                            onClick={() => openBrowse({ kind: "grade" })}
+                            className="flex shrink-0 cursor-pointer items-center gap-1 rounded-md bg-white px-2 py-1 text-xs font-medium text-zinc-900 transition-colors hover:bg-white/90"
+                          >
+                            <Palette className="size-3.5" />
+                            {t.lab.cmd.gradeLib}
+                          </button>
+                        </div>
+                      </TabsContent>
                       <TabsContent value="tone">
                         {/* The view transform is its own tab, next to Grade and in front
                             of it: the transform maps the render to the display, the
@@ -5617,95 +7213,294 @@ export default function Lab() {
                       />
                     </>
                   ) : (
-                    // Camera: fov and the orbit — the shot's basic parameters.
-                    <>
-                      {/* Same shape as the ground-under-stage pane: a loaded
-                          camera VMD owns the shot, so the orbit controls grey
-                          out under a one-line note instead of fighting it. */}
-                      {cameraClip && <p className="mb-2 text-xs">{t.lab.cameraDrivesView}</p>}
-                      <fieldset
-                        disabled={!!cameraClip}
-                        className={cn(cameraClip && "pointer-events-none opacity-40")}
-                      >
-                        {/* Degrees on the slider, radians in the document —
-                            the same boundary conversion azimuth and elevation
-                            make two rows down. A camera VMD animates fov
-                            itself, which is what the fieldset above greys the
-                            whole pane for. */}
-                        <SliderRow
-                          label={t.lab.ctl.fov}
-                          value={Math.round(((camera.fov ?? CAMERA_DEFAULT_FOV) * 180) / Math.PI)}
-                          min={10}
-                          max={120}
-                          step={1}
-                          onChange={(v) => changeCamera({ ...camera, fov: (v * Math.PI) / 180 })}
-                          fmt={(v) => `${Math.round(v)}°`}
-                        />
-                        <SliderRow
-                          label={t.lab.ctl.distance}
-                          value={camera.distance}
-                          min={1}
-                          max={100}
-                          step={0.1}
-                          onChange={(v) => changeCamera({ ...camera, distance: v })}
-                          fmt={(v) => v.toFixed(1)}
-                        />
-                        {/* Azimuth and Elevation, the same pair the Sun uses —
-                            both are a direction, so they answer to one set of
-                            words. Alpha/beta are Babylon's internal names and
-                            mean nothing to anyone else; degrees here, radians
-                            in the document.
-                            Elevation is NOT beta: beta is polar, measured from
-                            straight overhead, so 90 is eye level and small
-                            numbers are a bird's-eye view — the reverse of what
-                            "elevation" says. Converted at the boundary, so the
-                            slider reads 0 at the horizon and + from above. */}
-                        <SliderRow
-                          label={t.lab.ctl.azimuth}
-                          value={Math.round((camera.alpha * 180) / Math.PI)}
-                          min={-180}
-                          max={180}
-                          step={1}
-                          onChange={(v) => changeCamera({ ...camera, alpha: (v * Math.PI) / 180 })}
-                          fmt={(v) => `${v}°`}
-                        />
-                        <SliderRow
-                          label={t.lab.ctl.elevation}
-                          value={Math.round(90 - (camera.beta * 180) / Math.PI)}
-                          min={-85}
-                          max={85}
-                          step={1}
-                          onChange={(v) => changeCamera({ ...camera, beta: ((90 - v) * Math.PI) / 180 })}
-                          fmt={(v) => `${v}°`}
-                        />
-                        {/* No follow toggle: target is always a point in the
-                            world. A scene saved before this row was trimmed can
-                            still carry camera.follow, in which case these stay
-                            correctly labelled as the offset they still are. */}
-                        {(["X", "Y", "Z"] as const).map((axis, i) => (
+                    // Camera: Lens (the shot) | Focus (depth of field), the
+                    // Environment row's own tab pattern.
+                    <Tabs value={cameraTab} onValueChange={(v) => setCameraTab(v as typeof cameraTab)}>
+                      <TabsList className="-mt-1 mb-2 w-full">
+                        <TabsTrigger value="lens" className="flex-1">
+                          {t.lab.tabs.lens}
+                        </TabsTrigger>
+                        <TabsTrigger value="focus" className="flex-1">
+                          {t.lab.tabs.focus}
+                        </TabsTrigger>
+                      </TabsList>
+                      <TabsContent value="lens">
+                        {/* Same shape as the ground-under-stage pane: a loaded
+                            camera VMD owns the shot, so the orbit controls grey
+                            out under a one-line note instead of fighting it. */}
+                        {cameraClip && <p className="mb-2 text-xs">{t.lab.cameraDrivesView}</p>}
+                        <fieldset
+                          disabled={!!cameraClip}
+                          className={cn(cameraClip && "pointer-events-none opacity-40")}
+                        >
+                          {/* Follow first — it decides what the three numbers at
+                              the bottom MEAN (offset from a bone vs a point in
+                              the world), so each direction re-seeds its own
+                              default rather than reinterpreting the other's. */}
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs">{t.lab.ctl.follow}</span>
+                            <Switch
+                              size="sm"
+                              checked={!!camera.follow}
+                              onCheckedChange={(on) =>
+                                changeCamera({
+                                  ...camera,
+                                  follow: on ? FOLLOW_BONE : null,
+                                  target: [...(on ? FOLLOW_OFFSET_DEFAULT : TARGET_DEFAULT)] as [
+                                    number,
+                                    number,
+                                    number,
+                                  ],
+                                })
+                              }
+                            />
+                          </div>
+                          {/* Degrees on the slider, radians in the document —
+                              the same boundary conversion azimuth and elevation
+                              make two rows down. A camera VMD animates fov
+                              itself, which is what the fieldset above greys the
+                              whole pane for. */}
                           <SliderRow
-                            key={axis}
-                            label={camera.follow ? t.lab.ctl.offset(axis) : t.lab.ctl.target(axis)}
-                            value={camera.target[i]}
-                            min={i === 1 ? -10 : -50}
-                            max={50}
+                            label={t.lab.ctl.fov}
+                            value={Math.round(((camera.fov ?? CAMERA_DEFAULT_FOV) * 180) / Math.PI)}
+                            min={10}
+                            max={120}
+                            step={1}
+                            onChange={(v) => changeCamera({ ...camera, fov: (v * Math.PI) / 180 })}
+                            fmt={(v) => `${Math.round(v)}°`}
+                          />
+                          <SliderRow
+                            label={t.lab.ctl.distance}
+                            value={camera.distance}
+                            min={1}
+                            max={100}
                             step={0.1}
-                            onChange={(v) => {
-                              const target = [...camera.target] as [number, number, number]
-                              target[i] = v
-                              changeCamera({ ...camera, target })
-                            }}
+                            onChange={(v) => changeCamera({ ...camera, distance: v })}
                             fmt={(v) => v.toFixed(1)}
                           />
-                        ))}
-                      </fieldset>
-                    </>
+                          {/* Azimuth and Elevation, the same pair the Sun uses —
+                              both are a direction, so they answer to one set of
+                              words. Alpha/beta are Babylon's internal names and
+                              mean nothing to anyone else; degrees here, radians
+                              in the document.
+                              Elevation is NOT beta: beta is polar, measured from
+                              straight overhead, so 90 is eye level and small
+                              numbers are a bird's-eye view — the reverse of what
+                              "elevation" says. Converted at the boundary, so the
+                              slider reads 0 at the horizon and + from above. */}
+                          <SliderRow
+                            label={t.lab.ctl.azimuth}
+                            value={Math.round((camera.alpha * 180) / Math.PI)}
+                            min={-180}
+                            max={180}
+                            step={1}
+                            onChange={(v) => changeCamera({ ...camera, alpha: (v * Math.PI) / 180 })}
+                            fmt={(v) => `${v}°`}
+                          />
+                          <SliderRow
+                            label={t.lab.ctl.elevation}
+                            value={Math.round(90 - (camera.beta * 180) / Math.PI)}
+                            min={-85}
+                            max={85}
+                            step={1}
+                            onChange={(v) => changeCamera({ ...camera, beta: ((90 - v) * Math.PI) / 180 })}
+                            fmt={(v) => `${v}°`}
+                          />
+                          {(["X", "Y", "Z"] as const).map((axis, i) => (
+                            <SliderRow
+                              key={axis}
+                              label={camera.follow ? t.lab.ctl.offset(axis) : t.lab.ctl.target(axis)}
+                              value={camera.target[i]}
+                              min={i === 1 ? -10 : -50}
+                              max={50}
+                              step={0.1}
+                              onChange={(v) => {
+                                const target = [...camera.target] as [number, number, number]
+                                target[i] = v
+                                changeCamera({ ...camera, target })
+                              }}
+                              fmt={(v) => v.toFixed(1)}
+                            />
+                          ))}
+                        </fieldset>
+                      </TabsContent>
+                      <TabsContent value="focus">
+                        {/* Focus is automatic — the engine tracks the character's
+                            depth span every frame. Strength is the whole dial. */}
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs">{t.lab.ctl.dof}</span>
+                          <Switch
+                            size="sm"
+                            checked={dof.enabled}
+                            onCheckedChange={(v) => patch("dof", { enabled: v })}
+                          />
+                        </div>
+                        {/* mt-2.5 on the fieldset, not the row: SliderRow zeroes
+                            its own top margin as a first child, which pinned
+                            Strength against the switch. */}
+                        <fieldset
+                          disabled={!dof.enabled}
+                          className={cn("mt-2.5", !dof.enabled && "pointer-events-none opacity-40")}
+                        >
+                          <SliderRow
+                            label={t.lab.ctl.strength}
+                            value={dof.aperture}
+                            min={0.2}
+                            max={3}
+                            step={0.05}
+                            onChange={(v) => patch("dof", { aperture: v })}
+                            fmt={(v) => v.toFixed(2)}
+                          />
+                        </fieldset>
+                      </TabsContent>
+                    </Tabs>
                   )}
                 </LayerRow>
               ))}
             </StackGroup>
           </div>
         </Surface>
+      )}
+
+      {/* ── Inspector: the selected cast member's materials ── */}
+      {mounted && inspected && (
+        <Surface
+          placement="side"
+          // Starts BELOW the top-right pills (top-3 + their h-10 + 8px), capped
+          // above the transport: 100% minus 3.75rem top minus 4rem transport
+          // reserve. 16rem, symmetric with the left dock — and the same 16rem
+          // the pill cluster above states, both anchored to the same right
+          // inset, so the two left edges coincide without either measuring the
+          // other. The pills come to the column now, not the other way round.
+          className="top-[3.75rem] bottom-auto max-h-[calc(100%-7.75rem)] animate-[panel-in_0.2s_cubic-bezier(0.32,0.72,0,1)]"
+          style={{ zIndex: inspectorZ.z }}
+          onPointerDownCapture={inspectorZ.onPointerDownCapture}
+          onFocusCapture={inspectorZ.onFocusCapture}
+        >
+          {/* The command's own name, not the model's: the cast row already says
+              which character this is, the panel's model tabs say which one is
+              being edited, and a third copy with stats was the same fact three
+              times. One title, matching the palette entry that opened it. */}
+          <div className="flex shrink-0 items-center gap-2.5 border-b border-line px-4 py-2.5">
+            <MaterialSphereIcon className="size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate text-xs font-medium">{t.lab.editMaterials}</span>
+            <CastAction icon={X} label={t.lab.closeMaterials} onClick={() => setInspectedId(null)} />
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <MaterialsPanel
+              dense
+              modelTabs={models.map((m) => ({ id: m.id, file: m.file, active: m.id === inspected.id }))}
+              // Through openMaterials, not setInspectedId: switching model here
+              // is the same act as opening the panel on another one, and the
+              // node editor's binding has to be released either way.
+              onSelectModel={openMaterials}
+              materials={inspected.materials}
+              groups={inspectedGroups}
+              activeGroupId={activeGroupId}
+              onHover={(name) => highlight(inspected.id, name)}
+              onToggleVisible={(name) => toggleVisible(inspected.id, name)}
+              onOpenLibrary={openGraphLibrary}
+              onCreateGroup={inspectCreateGroup}
+              onRenameGroup={inspectRenameGroup}
+              onDeleteGroup={inspectDeleteGroup}
+              onEditGroupGraph={editGroupGraph}
+              onMoveMaterial={inspectMoveMaterial}
+              onPickGraph={inspectPickGraph}
+            />
+          </div>
+        </Surface>
+      )}
+
+      {/* ── Export ──
+          MOUNTED even while closed: the export runs inside RenderPanel, and
+          unmounting would kill a render in flight. Close hides; the pill below
+          carries the progress; completion downloads by itself (iMovie-quiet),
+          so nothing reopens. */}
+      {mounted && (
+        <Surface
+          placement="side"
+          // Starts BELOW the top-right pills (top-3 + their h-10 + 8px) and hugs
+          // its content like the left dock, capped above the transport: 100%
+          // minus 3.75rem top minus 4rem transport reserve.
+          className={cn(
+            "top-[3.75rem] bottom-auto max-h-[calc(100%-7.75rem)]",
+            // Fade only. It used to slide 8px right on the way out, and against
+            // a panel whose left edge is the column's edge that reads as the
+            // panel resizing rather than leaving — the eye tracks the moving
+            // edge, not the fading one. Nothing else in this chrome translates
+            // to dismiss; the inspector simply unmounts.
+            "transition-[opacity,visibility] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)]",
+            !exportOpen && "invisible opacity-0",
+          )}
+          style={{ zIndex: exportZ.z }}
+          onPointerDownCapture={exportZ.onPointerDownCapture}
+          onFocusCapture={exportZ.onFocusCapture}
+        >
+          <div className="flex shrink-0 items-center gap-2.5 border-b border-line px-4 py-2.5">
+            <span className="min-w-0 flex-1 truncate text-xs font-medium">{t.lab.exportPanel}</span>
+            <CastAction icon={X} label={t.lab.closeExport} onClick={() => setExportOpen(false)} />
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <RenderPanel
+              active={exportOpen}
+              engineRef={engineRef}
+              canvasRef={canvasRef}
+              modelName={masterId ?? models[0]?.id ?? ""}
+              extraModelNames={models.filter((m) => animByModel[m.id] && m.id !== masterId).map((m) => m.id)}
+              sceneName={sceneName}
+              animName={masterClipName}
+              animDuration={animDuration}
+              backdrop={bgImage && !bgImage.dome ? bgImage : null}
+              backgroundColor={settings.background.color}
+              musicUrl={musicClip?.url ?? null}
+              musicVolume={audio.volume}
+              background={framing.background}
+              onBackgroundChange={framing.setBackground}
+              onExportingChange={(v) => {
+                framing.setExporting(v)
+                // Closes the "render" gap for the rest of the session. Set when
+                // the export STARTS: the suggestion has done its job by then,
+                // and a failed render is not a reason to keep nagging.
+                if (v) setExportedOnce(true)
+              }}
+              onFramePreviewChange={framing.handleFramePreview}
+              onProgressChange={setExportProgress}
+              rasterLyricsAt={rasterLyricsAt}
+              // Only the MOVING ones: a still card is already in its texture and
+              // has no frames to advance.
+              planes={planes.flatMap((p) => {
+                const file = sceneFiles.planes.get(p.id)
+                if (!file || (!p.video && !p.animated)) return []
+                return [
+                  {
+                    id: p.id,
+                    file,
+                    kind: p.video ? ("video" as const) : ("animated" as const),
+                    frameWidth: p.frameWidth,
+                    frameHeight: p.frameHeight,
+                  },
+                ]
+              })}
+            />
+          </div>
+        </Surface>
+      )}
+
+      {/* A running export, folded to a pill while its panel is hidden. Click
+          reopens; no cancel here — destructive actions stay in the panel they
+          belong to, and the pill simply vanishes when the download lands. */}
+      {framing.exporting && !exportOpen && (
+        <button
+          onClick={() => setExportOpen(true)}
+          className={cn(
+            PILL,
+            "absolute right-3 bottom-3 flex h-10 cursor-pointer items-center gap-2 px-4 text-[13px] text-foreground",
+          )}
+        >
+          <span className="size-2 animate-pulse rounded-full bg-red-500" />
+          {t.lab.exporting}
+          {exportPct !== null ? ` ${exportPct}%` : "…"}
+        </button>
       )}
 
       {/* ── Transport ──
