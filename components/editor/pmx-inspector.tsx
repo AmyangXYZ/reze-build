@@ -29,23 +29,31 @@ import { rgbToHex, hexToRgba } from "@/lib/color"
 import { assetUrl } from "@/lib/scene"
 import { cn } from "@/lib/utils"
 
-/** One labelled value. Label muted and left, value bright and right — the same
- *  two-colour split the dock's rows use, so a panel of forty of these still
- *  scans as one column of decisions rather than as a form. */
+/** One labelled value, in the shape reze-design's SliderRow/ColorRow rows
+ *  use — a FIXED label column so a stack of them lines up on one axis, not
+ *  Section's own heading style (that stays untouched; this is the row inside
+ *  a section, not the section itself). w-28 fits this panel's longest labels
+ *  ("Specular power", "External key") the way SliderRow's w-16 fits its own. */
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex min-h-7 items-center gap-2.5 px-4 py-0.5">
-      <span className="shrink-0 text-xs text-muted-foreground">{label}</span>
-      <span className="flex min-w-0 flex-1 items-center justify-end gap-1 text-xs text-foreground">{children}</span>
+    <div className="mt-1.5 flex min-h-4 items-center gap-1.5 px-4 first:mt-0">
+      <span className="w-28 shrink-0 truncate text-[11px] text-muted-foreground">{label}</span>
+      <span className="flex min-w-0 flex-1 items-center justify-end gap-1 text-[11px] text-foreground">{children}</span>
     </div>
   )
 }
 
-/** The input every editable field wears: the dock's row height and type, not
- *  the Input primitive's own form-sized defaults. Right-aligned so an edited
- *  value sits exactly where the read-only one it replaced did. */
-const CELL =
-  "h-5 min-w-0 rounded-chip border-transparent bg-transparent px-1 py-0 text-right text-xs shadow-none md:text-xs " +
+/** SliderRow's own VALUE_BOX, unchanged — a typed number looks the same here
+ *  as it does in the scene dock. Short on purpose: h-4/w-10 is the box a
+ *  single value earns, not the Input primitive's form-sized default. */
+const VALUE_BOX =
+  "block h-4 w-10 shrink-0 rounded border border-transparent bg-transparent p-0 text-right text-[11px] leading-4 tabular-nums shadow-none outline-none " +
+  "hover:border-line-strong hover:bg-white/[0.04] focus-visible:border-line-strong focus-visible:bg-white/[0.04]"
+
+/** A name or a memo needs room prose does — VALUE_BOX's 40px would make a
+ *  rename box unusable. Same height and text size, width left to fill the row. */
+const TEXT_BOX =
+  "h-4 min-w-0 flex-1 rounded border-transparent bg-transparent p-0 text-right text-[11px] leading-4 shadow-none " +
   "hover:border-line-strong hover:bg-white/[0.04] focus-visible:border-line-strong focus-visible:bg-white/[0.04] focus-visible:ring-0"
 
 /**
@@ -55,13 +63,13 @@ const CELL =
  * and make "左足" three undo steps. Escape abandons, which is the only way to
  * back out of a half-typed name without knowing what it used to be.
  */
-function TextCell({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
+function TextCell({ value, onCommit, box = TEXT_BOX }: { value: string; onCommit: (v: string) => void; box?: string }) {
   const [draft, setDraft] = useState(value)
   const [editing, setEditing] = useState(false)
   if (!editing && draft !== value) setDraft(value)
   return (
     <Input
-      className={CELL}
+      className={box}
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onFocus={() => setEditing(true)}
@@ -84,9 +92,10 @@ function TextCell({ value, onCommit }: { value: string; onCommit: (v: string) =>
 /** The same, for a number. A field that will not parse commits nothing rather
  *  than committing NaN — a document with NaN in a position writes a file that
  *  loads as a model folded into the origin. */
-function NumCell({ value, onCommit, step }: { value: number; onCommit: (v: number) => void; step?: number }) {
+function NumCell({ value, onCommit, box = VALUE_BOX }: { value: number; onCommit: (v: number) => void; box?: string }) {
   return (
     <TextCell
+      box={box}
       value={num(value, 4)}
       onCommit={(v) => {
         const n = Number(v)
@@ -96,14 +105,16 @@ function NumCell({ value, onCommit, step }: { value: number; onCommit: (v: numbe
   )
 }
 
-/** Three of them. PMX positions are three independent numbers, so they are three
- *  independent commits — editing Y should not re-write X. */
+/** Three of them, each narrower than a standalone NumCell so the triple still
+ *  fits the row. PMX positions are three independent numbers, so they are
+ *  three independent commits — editing Y should not re-write X. */
 function VecCell({ v, onCommit }: { v: readonly number[]; onCommit: (v: [number, number, number]) => void }) {
   return (
-    <span className="flex min-w-0 flex-1 gap-0.5">
+    <span className="flex min-w-0 flex-1 justify-end gap-0.5">
       {[0, 1, 2].map((i) => (
         <NumCell
           key={i}
+          box="block h-4 w-9 shrink-0 rounded border border-transparent bg-transparent p-0 text-right text-[11px] leading-4 tabular-nums shadow-none outline-none hover:border-line-strong hover:bg-white/[0.04] focus-visible:border-line-strong focus-visible:bg-white/[0.04]"
           value={v[i]}
           onCommit={(n) => {
             const next: [number, number, number] = [v[0], v[1], v[2]]
@@ -118,10 +129,12 @@ function VecCell({ v, onCommit }: { v: readonly number[]; onCommit: (v: [number,
 
 /** Every flag the field has, on or off — the read-only view could hide the off
  *  ones because an absent chip meant "off", but a chip you can CLICK has to be
- *  there to click. */
+ *  there to click. Grid, not flex-wrap: a bitfield's names vary wildly in
+ *  length, and wrapping left them landing wherever the last one happened to
+ *  end — two even columns read as a field, not a paragraph. */
 function FlagCells({ bits, names, onCommit }: { bits: number; names: string[]; onCommit: (bits: number) => void }) {
   return (
-    <span className="flex flex-wrap justify-end gap-1">
+    <div className="grid grid-cols-2 gap-1">
       {names.map((n, i) =>
         n === "" ? null : (
           <button
@@ -129,7 +142,7 @@ function FlagCells({ bits, names, onCommit }: { bits: number; names: string[]; o
             aria-pressed={((bits >> i) & 1) === 1}
             onClick={() => onCommit(bits ^ (1 << i))}
             className={cn(
-              "rounded-chip border px-1 py-0 text-xs leading-4 transition-colors",
+              "truncate rounded-chip border px-1 py-0.5 text-left text-[10px] leading-3 transition-colors",
               (bits >> i) & 1
                 ? "border-blue-400/40 bg-blue-400/15 text-blue-400"
                 : "border-line-strong text-muted-foreground hover:border-white/25 hover:text-foreground",
@@ -139,13 +152,14 @@ function FlagCells({ bits, names, onCommit }: { bits: number; names: string[]; o
           </button>
         ),
       )}
-    </span>
+    </div>
   )
 }
 
 /** The app's own picker, so a colour is chosen the same way here as in the
- *  scene dock. PMX keeps alpha beside the triple; the picker does not, so alpha
- *  stays its own number rather than being smuggled into the hex. */
+ *  scene dock — ColorRow's own row shape. PMX keeps alpha beside the triple;
+ *  the picker does not, so alpha stays its own number rather than being
+ *  smuggled into the hex. */
 function ColorCell({
   c,
   alpha,
@@ -156,14 +170,15 @@ function ColorCell({
   onCommit: (c: number[]) => void
 }) {
   return (
-    <span className="flex items-center justify-end gap-2">
+    <span className="flex items-center justify-end gap-1.5">
       <ColorField value={rgbToHex(c)} onChange={(hex) => onCommit(hexToRgba(hex, alpha ? c[3] : 1))} />
       {alpha && <NumCell value={c[3]} onCommit={(a) => onCommit([c[0], c[1], c[2], a])} />}
     </span>
   )
 }
 
-/** A group of fields under a heading, in the dock's own label style. */
+/** A group of fields under a heading, in the dock's own label style — Field's
+ *  rows changed to match reze-design's SliderRow; this did not. */
 function Section({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="border-t border-line first:border-t-0">
@@ -185,38 +200,7 @@ function num(n: number, places = 3): string {
 }
 
 function Vec({ v, places = 3 }: { v: readonly number[]; places?: number }) {
-  return <span className="font-mono text-xs">{v.map((n) => num(n, places)).join("  ")}</span>
-}
-
-/** The flags a PMX bitfield actually has ON. Listing the off ones too doubles
- *  the panel to say nothing — an absent chip IS the off state, and the full
- *  vocabulary is three lines up in the type. */
-function Flags({ bits, names }: { bits: number; names: string[] }) {
-  const on = names.filter((_, i) => (bits >> i) & 1)
-  if (on.length === 0) return <span className="text-muted-foreground">none</span>
-  return (
-    <span className="flex flex-wrap justify-end gap-1">
-      {on.map((n) => (
-        <span key={n} className="rounded-chip border border-line-strong px-1.5 py-px text-xs text-muted-foreground">
-          {n}
-        </span>
-      ))}
-    </span>
-  )
-}
-
-function rgbaCss(c: readonly number[]): string {
-  const b = (x: number) => Math.round(Math.min(1, Math.max(0, x)) * 255)
-  return `rgb(${b(c[0])} ${b(c[1])} ${b(c[2])})`
-}
-
-function Color({ c, alpha }: { c: readonly number[]; alpha?: boolean }) {
-  return (
-    <span className="flex items-center justify-end gap-1.5">
-      <span className="size-3 shrink-0 rounded-chip border border-line-strong" style={{ background: rgbaCss(c) }} />
-      <Vec v={alpha ? c : c.slice(0, 3)} places={2} />
-    </span>
-  )
+  return <span className="font-mono text-[11px]">{v.map((n) => num(n, places)).join("  ")}</span>
 }
 
 /**
@@ -236,15 +220,15 @@ function TextureSlot({ label, path, src }: { label: string; path: string; src: s
         disabled={!src}
         onClick={() => setOpen(true)}
         className={cn(
-          "flex min-h-7 w-full items-center gap-2.5 px-4 py-0.5 text-left",
+          "mt-1.5 flex w-full items-center gap-1.5 px-4 text-left first:mt-0",
           src ? "hover:bg-white/[0.04]" : "cursor-default",
         )}
       >
         {/* Label left and value right, like every other row here — the panel is
             read down its labels, and a slot that moved its own somewhere else
             would be the one row you have to stop and parse. */}
-        <span className="shrink-0 text-xs text-muted-foreground">{label}</span>
-        <span className="min-w-0 flex-1 truncate text-right text-xs text-foreground" title={path}>
+        <span className="w-28 shrink-0 truncate text-[11px] text-muted-foreground">{label}</span>
+        <span className="min-w-0 flex-1 truncate text-right text-[11px] text-foreground" title={path}>
           {name}
         </span>
         {/* The thumbnail is the point of the row. A filename says which file is
@@ -438,7 +422,7 @@ function BoneFields({ bone, doc, edit }: { bone: PmxBone; doc: PmxDocument; edit
               <span className="flex flex-col items-end">
                 <span>{boneName(l.boneIndex)}</span>
                 {l.hasLimit && (
-                  <span className="font-mono text-xs text-muted-foreground">
+                  <span className="font-mono text-[11px] text-muted-foreground">
                     {(l.limitMin ?? []).map((n) => num(n, 2)).join(" ")} → {(l.limitMax ?? []).map((n) => num(n, 2)).join(" ")}
                   </span>
                 )}
