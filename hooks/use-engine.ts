@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { EFFECTS } from "@/lib/effects"
-import { Engine, parseLRC, parseMidi, Quat, Vec3, type ApplyStyleGroupResult, type CompileOptions, type GizmoDragEvent, type Model, type RenderClass, type MidiNote, type StyleGroup, type LyricLine } from "reze-engine"
+import { Engine, parseLRC, parseMidi, Quat, Vec3, type GizmoDragEvent, type Model, type RenderClass, type MidiNote, type StyleGroup, type LyricLine } from "reze-engine"
 import { clipTrimmedToMotion } from "@/lib/clip"
 import { rasterizeLyrics } from "@/lib/lyrics-raster"
 import { SLOT_GRAPHS } from "@/lib/materials"
@@ -828,6 +828,18 @@ export function useEngine(
   }, [models])
 
   useEffect(() => {
+    // Synchronous, before the async boot below ever awaits anything —
+    // swapScene already resets this the same way when it moves an EXISTING
+    // engine to a new scene. This effect instead builds a brand NEW engine,
+    // and skipped this reset entirely: on a hot reload, `ready` could stay
+    // true from the outgoing engine for the whole async gap while engineRef
+    // already pointed at the incoming one, and anything gated only on `ready`
+    // (not on which instance) sailed through and called a method on an
+    // engine whose device init() had not assigned yet. That is the
+    // "Cannot read properties of undefined (reading 'queue'/'createBuffer')"
+    // family of crash, and it was reachable from every such caller, not just
+    // the ones that happened to get reported.
+    setReady(false)
     let disposed = false
     const boot = async () => {
       if (!canvasRef.current) return
@@ -942,21 +954,6 @@ export function useEngine(
       engineRef.current?.dispose?.()
       engineRef.current = null
     }
-  }, [])
-
-  const highlight = useCallback((modelId: string, material: string | null) => {
-    engineRef.current?.setSelectedMaterial(material ? modelId : null, material)
-  }, [])
-
-  const toggleVisible = useCallback((modelId: string, name: string) => {
-    engineRef.current?.toggleMaterialVisible(modelId, name)
-    setModels((prev) =>
-      prev.map((m) =>
-        m.id === modelId
-          ? { ...m, materials: m.materials.map((r) => (r.name === name ? { ...r, visible: !r.visible } : r)) }
-          : m,
-      ),
-    )
   }, [])
 
   // Zip-expanded files carry their RELATIVE PATH in File.name (lib/uploads.ts
@@ -1530,21 +1527,6 @@ export function useEngine(
 
   // ── Style-group mutators (host owns the set; these mirror to state + engine). ──
 
-  /** Add/replace one group's graph or definition (compile + swap just that group). */
-  const upsertGroup = useCallback(
-    async (modelId: string, group: StyleGroup, opts?: CompileOptions): Promise<ApplyStyleGroupResult> => {
-      setGroupsByModel((prev) => {
-        const list = prev[modelId] ?? []
-        const i = list.findIndex((g) => g.id === group.id)
-        return { ...prev, [modelId]: i >= 0 ? list.map((g) => (g.id === group.id ? group : g)) : [...list, group] }
-      })
-      const engine = engineRef.current
-      if (!engine) return { ok: false, diagnostics: [], slotMap: [] }
-      return engine.upsertStyleGroup(modelId, group, opts)
-    },
-    [],
-  )
-
   /** Replace one model's whole set (structural changes: create/move/remove groups). */
   const applyGroups = useCallback(async (modelId: string, next: StyleGroup[]) => {
     setGroupsByModel((prev) => ({ ...prev, [modelId]: next }))
@@ -1686,7 +1668,6 @@ export function useEngine(
     setStageMorph,
     resetStageMorphs,
     groupsByModel,
-    upsertGroup,
     applyGroups,
     resetStyleGroups,
     bundleFile,
@@ -1694,8 +1675,6 @@ export function useEngine(
     swapScene,
     setCameraView,
     setGroupParam,
-    highlight,
-    toggleVisible,
     addModelFromFiles,
     replaceModelFromFiles,
     removeModelById,

@@ -20,6 +20,7 @@
 // this tool's whole promise is that it does not do that.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { ChevronDown } from "lucide-react"
 import type { PmxBone, PmxDocument, PmxMaterial } from "reze-engine"
 import type { BonePatch, MaterialPatch } from "@/lib/pmx-edits"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
@@ -34,9 +35,9 @@ import { cn } from "@/lib/utils"
  *  Section's own heading style (that stays untouched; this is the row inside
  *  a section, not the section itself). w-28 fits this panel's longest labels
  *  ("Specular power", "External key") the way SliderRow's w-16 fits its own. */
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return (
-    <div className="mt-1.5 flex min-h-4 items-center gap-1.5 px-4 first:mt-0">
+    <div className={cn("mt-1.5 flex items-center gap-1.5 px-4 first:mt-0", className)}>
       <span className="w-28 shrink-0 truncate text-[11px] text-muted-foreground">{label}</span>
       <span className="flex min-w-0 flex-1 items-center justify-end gap-1 text-[11px] text-foreground">{children}</span>
     </div>
@@ -47,13 +48,13 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
  *  as it does in the scene dock. Short on purpose: h-4/w-10 is the box a
  *  single value earns, not the Input primitive's form-sized default. */
 const VALUE_BOX =
-  "block h-4 w-10 shrink-0 rounded border border-transparent bg-transparent p-0 text-right text-[11px] leading-4 tabular-nums shadow-none outline-none " +
+  "block h-4 w-10 shrink-0 rounded border border-transparent bg-transparent p-0 text-right text-[11px] md:text-[11px] leading-4 tabular-nums shadow-none outline-none " +
   "hover:border-line-strong hover:bg-white/[0.04] focus-visible:border-line-strong focus-visible:bg-white/[0.04]"
 
 /** A name or a memo needs room prose does — VALUE_BOX's 40px would make a
  *  rename box unusable. Same height and text size, width left to fill the row. */
 const TEXT_BOX =
-  "h-4 min-w-0 flex-1 rounded border-transparent bg-transparent p-0 text-right text-[11px] leading-4 shadow-none " +
+  "h-4 min-w-0 flex-1 rounded border-transparent bg-transparent p-0 text-right text-[11px] md:text-[11px] leading-4 shadow-none " +
   "hover:border-line-strong hover:bg-white/[0.04] focus-visible:border-line-strong focus-visible:bg-white/[0.04] focus-visible:ring-0"
 
 /**
@@ -114,7 +115,7 @@ function VecCell({ v, onCommit }: { v: readonly number[]; onCommit: (v: [number,
       {[0, 1, 2].map((i) => (
         <NumCell
           key={i}
-          box="block h-4 w-9 shrink-0 rounded border border-transparent bg-transparent p-0 text-right text-[11px] leading-4 tabular-nums shadow-none outline-none hover:border-line-strong hover:bg-white/[0.04] focus-visible:border-line-strong focus-visible:bg-white/[0.04]"
+          box="block h-4 w-9 shrink-0 rounded border border-transparent bg-transparent p-0 text-right text-[11px] md:text-[11px] leading-4 tabular-nums shadow-none outline-none hover:border-line-strong hover:bg-white/[0.04] focus-visible:border-line-strong focus-visible:bg-white/[0.04]"
           value={v[i]}
           onCommit={(n) => {
             const next: [number, number, number] = [v[0], v[1], v[2]]
@@ -129,12 +130,12 @@ function VecCell({ v, onCommit }: { v: readonly number[]; onCommit: (v: [number,
 
 /** Every flag the field has, on or off — the read-only view could hide the off
  *  ones because an absent chip meant "off", but a chip you can CLICK has to be
- *  there to click. Grid, not flex-wrap: a bitfield's names vary wildly in
- *  length, and wrapping left them landing wherever the last one happened to
- *  end — two even columns read as a field, not a paragraph. */
+ *  there to click. One column: this panel is 16rem wide and a bitfield's names
+ *  ("external parent", "after physics") do not fit two across without cutting
+ *  the word that is the only reason the chip is there. */
 function FlagCells({ bits, names, onCommit }: { bits: number; names: string[]; onCommit: (bits: number) => void }) {
   return (
-    <div className="grid grid-cols-2 gap-1">
+    <div className="grid grid-cols-1 gap-1">
       {names.map((n, i) =>
         n === "" ? null : (
           <button
@@ -142,7 +143,7 @@ function FlagCells({ bits, names, onCommit }: { bits: number; names: string[]; o
             aria-pressed={((bits >> i) & 1) === 1}
             onClick={() => onCommit(bits ^ (1 << i))}
             className={cn(
-              "truncate rounded-chip border px-1 py-0.5 text-left text-[10px] leading-3 transition-colors",
+              "rounded-chip border px-1.5 py-0.5 text-left text-[10px] leading-3 transition-colors",
               (bits >> i) & 1
                 ? "border-blue-400/40 bg-blue-400/15 text-blue-400"
                 : "border-line-strong text-muted-foreground hover:border-white/25 hover:text-foreground",
@@ -234,7 +235,7 @@ function TextureSlot({ label, path, src }: { label: string; path: string; src: s
         {/* The thumbnail is the point of the row. A filename says which file is
             bound; the picture says whether it is the RIGHT one, which is the
             question anyone opens this panel to answer. */}
-        <span className="size-5 shrink-0 overflow-hidden rounded-chip border border-line-strong" style={CHECKER}>
+        <span className="size-9 shrink-0 overflow-hidden rounded-chip border border-line-strong" style={CHECKER}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           {src && <img src={src} alt="" className="size-full object-contain" />}
         </span>
@@ -439,11 +440,15 @@ function MaterialFields({
   material,
   doc,
   src,
+  style,
   edit,
 }: {
   material: PmxMaterial
   doc: PmxDocument
   src: Map<string, string>
+  /** The built-in preset graph this material's style group renders through, or
+   *  null when it is ungrouped (or the group has no graph). */
+  style: string | null
   edit: EditMaterial
 }) {
   const tex = (i: number) => (i < 0 || i >= doc.textures.length ? null : doc.textures[i])
@@ -455,6 +460,19 @@ function MaterialFields({
   return (
     <>
       <Section label="Material">
+        {/* Read-only, and first — everything below this line does nothing for a
+            grouped material's colour and shading, since the group's compiled
+            graph is what actually draws, not the PMX fields. Naming the graph
+            here is what stops that from looking like a silent failure. Drawn
+            as a selector (border, chevron) rather than bare text so it reads
+            as the one PICKED-not-typed value on this panel — the border below
+            is what closes it off from Name, which starts the typed fields. */}
+        <Field label="Style" className="pb-1.5 border-b border-line">
+          <span className="flex h-4 min-w-0 items-center gap-1 rounded border border-line-strong bg-white/[0.04] px-1.5">
+            <span className={cn("min-w-0 flex-1 truncate", !style && "text-muted-foreground")}>{style ?? "—"}</span>
+            <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+          </span>
+        </Field>
         <Field label="Name">
           <TextCell value={material.name} onCommit={(v) => edit({ rename: v })} />
         </Field>
@@ -530,6 +548,7 @@ export function PmxInspector({
   doc,
   bone,
   material,
+  materialStyle,
   files,
   baseDir,
   onEditBone,
@@ -540,6 +559,10 @@ export function PmxInspector({
   doc: PmxDocument
   bone: string | null
   material: string | null
+  /** The built-in preset graph the picked material's style group renders
+   *  through, or null when it is ungrouped. Display only — switching happens
+   *  in the style panel, which already owns that job. */
+  materialStyle: string | null
   /** Everything that arrived with the .pmx — the disk-opened case. */
   files: File[]
   /** The .pmx's own directory — the served case. */
@@ -588,6 +611,7 @@ export function PmxInspector({
             material={materialEntry!}
             doc={doc}
             src={src}
+            style={materialStyle}
             edit={(p) => onEditMaterial({ ...p, name: materialEntry!.name })}
           />
         )}

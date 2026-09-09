@@ -23,8 +23,7 @@ export const RECENT_DEPTH = 4
 /**
  * What the scene is MISSING. Suggestions answer "what now?", and the scene knows
  * the answer better than a hand-picked list does: with no cast there is nothing
- * to look at, with no motion nothing to watch, and a scene you have never
- * rendered is a scene whose next step is obvious.
+ * to look at, with no motion nothing to watch.
  *
  * A short, closed set on purpose. Every gap here has exactly one command that
  * fills it, and a gap nobody can act on is a mood, not a suggestion.
@@ -41,8 +40,6 @@ export type SceneGap =
   | "look"
   /** No music. */
   | "music"
-  /** Watchable, and never rendered. */
-  | "render"
   /** This user has never opened the gallery. Closes for good the first time
    *  they do, by any door — it is a fact about the person, not the scene, so it
    *  outlives the session the way the rest of these do not. */
@@ -56,16 +53,12 @@ export type SceneGap =
  * and just over the key feature, because it is the one gap about the APP rather
  * than the scene — someone who has not found the gallery cannot miss it by
  * accident, they miss it by never being told, and one slot until they go once is
- * the cheapest way to tell them. `render` sits above the other next steps
- * because it is the only one that produces something you keep — a scene that is
- * watchable and never rendered is a finished thing with no way out of the tab,
- * and the ones below it only make that thing nicer. The rest are ordinary next
- * steps: better than a curated guess, worse than what you did a moment ago.
+ * the cheapest way to tell them. The rest are ordinary next steps: better than a
+ * curated guess, worse than what you did a moment ago.
  */
 const GAP_WEIGHT: Record<SceneGap, number> = {
   cast: 8,
   discover: 5.5,
-  render: 4.5,
   look: 3.5,
   motion: 3.5,
   music: 3.5,
