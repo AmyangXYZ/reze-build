@@ -441,6 +441,7 @@ function MaterialFields({
   doc,
   src,
   style,
+  onPickStyle,
   edit,
 }: {
   material: PmxMaterial
@@ -449,6 +450,9 @@ function MaterialFields({
   /** The built-in preset graph this material's style group renders through, or
    *  null when it is ungrouped (or the group has no graph). */
   style: string | null
+  /** Opens the built-in preset picker. A pick, not an edit — the row chooses
+   *  a look off the shelf, it does not open the graph that renders it. */
+  onPickStyle: () => void
   edit: EditMaterial
 }) {
   const tex = (i: number) => (i < 0 || i >= doc.textures.length ? null : doc.textures[i])
@@ -460,18 +464,22 @@ function MaterialFields({
   return (
     <>
       <Section label="Material">
-        {/* Read-only, and first — everything below this line does nothing for a
-            grouped material's colour and shading, since the group's compiled
-            graph is what actually draws, not the PMX fields. Naming the graph
-            here is what stops that from looking like a silent failure. Drawn
-            as a selector (border, chevron) rather than bare text so it reads
-            as the one PICKED-not-typed value on this panel — the border below
-            is what closes it off from Name, which starts the typed fields. */}
+        {/* First — everything below this line does nothing for a grouped
+            material's colour and shading, since the group's compiled graph is
+            what actually draws, not the PMX fields. Naming the graph here is
+            what stops that from looking like a silent failure. A real button
+            now, not a drawn one: picking a built-in preset is a SWITCH, same
+            standing as the whole-model shelf, never a graph edit. The border
+            below is what closes it off from Name, which starts the typed
+            fields. */}
         <Field label="Style" className="pb-1.5 border-b border-line">
-          <span className="flex h-4 min-w-0 items-center gap-1 rounded border border-line-strong bg-white/[0.04] px-1.5">
-            <span className={cn("min-w-0 flex-1 truncate", !style && "text-muted-foreground")}>{style ?? "—"}</span>
+          <button
+            onClick={onPickStyle}
+            className="flex h-4 min-w-0 items-center gap-1 rounded border border-line-strong bg-white/[0.04] px-1.5 transition-colors hover:border-white/25 hover:bg-white/[0.06]"
+          >
+            <span className={cn("min-w-0 flex-1 truncate text-left", !style && "text-muted-foreground")}>{style ?? "—"}</span>
             <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-          </span>
+          </button>
         </Field>
         <Field label="Name">
           <TextCell value={material.name} onCommit={(v) => edit({ rename: v })} />
@@ -549,6 +557,7 @@ export function PmxInspector({
   bone,
   material,
   materialStyle,
+  onPickStyle,
   files,
   baseDir,
   onEditBone,
@@ -560,9 +569,12 @@ export function PmxInspector({
   bone: string | null
   material: string | null
   /** The built-in preset graph the picked material's style group renders
-   *  through, or null when it is ungrouped. Display only — switching happens
-   *  in the style panel, which already owns that job. */
+   *  through, or null when it is ungrouped. */
   materialStyle: string | null
+  /** Opens the built-in preset picker for the currently picked material. The
+   *  panel does not own that list — it just asks the host to show it, the
+   *  same way onClose asks the host to let go of the selection. */
+  onPickStyle: () => void
   /** Everything that arrived with the .pmx — the disk-opened case. */
   files: File[]
   /** The .pmx's own directory — the served case. */
@@ -612,6 +624,7 @@ export function PmxInspector({
             doc={doc}
             src={src}
             style={materialStyle}
+            onPickStyle={onPickStyle}
             edit={(p) => onEditMaterial({ ...p, name: materialEntry!.name })}
           />
         )}

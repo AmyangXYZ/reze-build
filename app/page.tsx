@@ -1390,6 +1390,11 @@ function CastLine({
   )
 }
 
+// Character presets only — a material never wants a stage's tile/wood/glass,
+// and the same filter is what makes a future family (Star Rail, say) show up
+// here with no change: it just has to not be tagged stage.
+const MATERIAL_GRAPHS = GRAPH_LIBRARY.filter((g) => !g.tags?.includes("stage"))
+
 /** Unique kebab id for a new (peeled / created) style group — main's own minting. */
 const newGroupId = (material: string, groups: StyleGroup[]): string => {
   const base =
@@ -3193,6 +3198,51 @@ export default function Lab() {
     },
     [groupsByModel, applyGroups],
   )
+
+  /**
+   * Assign ONE material to a built-in preset graph, or clear it back to
+   * ungrouped — the whole of what the inspector's Style row can do, since
+   * "no shader graph edits" means picking a look, not authoring one.
+   *
+   * A style GROUP is the only way a material renders through a graph at all,
+   * so this is really "move the material into whichever group already wears
+   * this look, or start one." Every OTHER group's membership is untouched —
+   * this is not inspectPickGraph's "change what this group renders," it is
+   * "change what renders this material," and those pull in opposite
+   * directions the moment two materials share a group already.
+   */
+  const setMaterialGraph = useCallback(
+    (modelId: string, materialName: string, graphName: string | null) => {
+      const list = groupsByModel[modelId] ?? []
+      const withoutMaterial = list
+        .map((g) => ({ ...g, materials: g.materials.filter((m) => m !== materialName) }))
+        .filter((g) => g.materials.length > 0)
+      if (!graphName) {
+        void applyGroups(modelId, withoutMaterial)
+        return
+      }
+      const entry = GRAPH_LIBRARY.find((g) => g.name === graphName)
+      if (!entry) return
+      const existing = withoutMaterial.find((g) => g.graph.name === graphName)
+      const next = existing
+        ? withoutMaterial.map((g) => (g === existing ? { ...g, materials: [...g.materials, materialName] } : g))
+        : [
+            ...withoutMaterial,
+            {
+              id: newGroupId(materialName, withoutMaterial),
+              materials: [materialName],
+              // Stamped to the catalog's own name, matching inspectPickGraph's
+              // rule from before this — the payload's own graph.name is not
+              // guaranteed to agree with it, and the lookup above depends on it.
+              graph: { ...structuredClone(entry.payload.graph), name: entry.name },
+            },
+          ]
+      void applyGroups(modelId, next)
+    },
+    [groupsByModel, applyGroups],
+  )
+  const [materialGraphPicker, setMaterialGraphPicker] = useState(false)
+
   // Publishing. A scrimmed dialog, not a panel: this is the one task where the
   // canvas is NOT what you are working on — you are naming and describing the
   // thing you already made. Dummy for now — see DummyPublishDialog.
@@ -4514,6 +4564,7 @@ export default function Lab() {
             bone={pickedBone}
             material={pickedMaterial}
             materialStyle={pickedMaterialStyle}
+            onPickStyle={() => setMaterialGraphPicker(true)}
             files={bundleFiles()}
             baseDir={castDir}
             onEditBone={editBone}
@@ -4576,6 +4627,54 @@ export default function Lab() {
               >
                 {t.brand.styles[pack]}
                 {pack === activePack && <Check className="size-3.5 shrink-0 text-pink-400" />}
+              </button>
+            ))}
+          </ChoiceList>
+        </DialogContent>
+      </Dialog>
+
+      {/* The Style row's own door — same shelf shape as the whole-model pack
+          above, scoped to ONE material instead of everything at once. Character
+          presets only (MATERIAL_GRAPHS drops the stage set): a material never
+          wants a stage's tile or glass. */}
+      <Dialog open={materialGraphPicker} onOpenChange={setMaterialGraphPicker}>
+        <DialogContent
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          className="max-w-sm rounded-xl border-line-strong bg-surface-raised backdrop-blur-xs"
+        >
+          <DialogHeader>
+            <DialogTitle className="text-sm">{t.lab.materialStyle}</DialogTitle>
+          </DialogHeader>
+          <ChoiceList className="max-h-64 overflow-y-auto overscroll-contain">
+            <button
+              data-current={pickedMaterialStyle === null}
+              onClick={() => {
+                setMaterialGraphPicker(false)
+                if (castEntry && pickedMaterial) setMaterialGraph(castEntry.id, pickedMaterial, null)
+              }}
+              className={cn(
+                "flex w-full cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-white/5",
+                pickedMaterialStyle === null ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {t.lab.materialStyleClear}
+              {pickedMaterialStyle === null && <Check className="size-3.5 shrink-0 text-pink-400" />}
+            </button>
+            {MATERIAL_GRAPHS.map((g) => (
+              <button
+                key={g.name}
+                data-current={g.name === pickedMaterialStyle}
+                onClick={() => {
+                  setMaterialGraphPicker(false)
+                  if (castEntry && pickedMaterial) setMaterialGraph(castEntry.id, pickedMaterial, g.name)
+                }}
+                className={cn(
+                  "flex w-full cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-white/5",
+                  g.name === pickedMaterialStyle ? "text-foreground" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {g.name}
+                {g.name === pickedMaterialStyle && <Check className="size-3.5 shrink-0 text-pink-400" />}
               </button>
             ))}
           </ChoiceList>

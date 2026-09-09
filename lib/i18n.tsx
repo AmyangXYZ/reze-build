@@ -576,6 +576,8 @@ const en = {
     },
     noModel: "No model",
     modelDescription: "Description",
+    materialStyle: "Material style",
+    materialStyleClear: "None (PMX colours)",
     ctl: {
       outline: "Outline",
       background: "Background",
@@ -1314,6 +1316,8 @@ const zh: Dictionary = {
     },
     noModel: "无模型",
     modelDescription: "描述",
+    materialStyle: "材质样式",
+    materialStyleClear: "无（PMX 颜色）",
     ctl: {
       background: "背景",
       ground: "地面",
