@@ -1394,6 +1394,7 @@ function CastLine({
 // and the same filter is what makes a future family (Star Rail, say) show up
 // here with no change: it just has to not be tagged stage.
 const MATERIAL_GRAPHS = GRAPH_LIBRARY.filter((g) => !g.tags?.includes("stage"))
+const materialGraphNames = MATERIAL_GRAPHS.map((g) => g.name)
 
 /** Unique kebab id for a new (peeled / created) style group — main's own minting. */
 const newGroupId = (material: string, groups: StyleGroup[]): string => {
@@ -3241,8 +3242,6 @@ export default function Lab() {
     },
     [groupsByModel, applyGroups],
   )
-  const [materialGraphPicker, setMaterialGraphPicker] = useState(false)
-
   // Publishing. A scrimmed dialog, not a panel: this is the one task where the
   // canvas is NOT what you are working on — you are naming and describing the
   // thing you already made. Dummy for now — see DummyPublishDialog.
@@ -4564,7 +4563,10 @@ export default function Lab() {
             bone={pickedBone}
             material={pickedMaterial}
             materialStyle={pickedMaterialStyle}
-            onPickStyle={() => setMaterialGraphPicker(true)}
+            materialGraphs={materialGraphNames}
+            onPickStyle={(name) => {
+              if (castEntry && pickedMaterial) setMaterialGraph(castEntry.id, pickedMaterial, name)
+            }}
             files={bundleFiles()}
             baseDir={castDir}
             onEditBone={editBone}
@@ -4633,53 +4635,6 @@ export default function Lab() {
         </DialogContent>
       </Dialog>
 
-      {/* The Style row's own door — same shelf shape as the whole-model pack
-          above, scoped to ONE material instead of everything at once. Character
-          presets only (MATERIAL_GRAPHS drops the stage set): a material never
-          wants a stage's tile or glass. */}
-      <Dialog open={materialGraphPicker} onOpenChange={setMaterialGraphPicker}>
-        <DialogContent
-          onOpenAutoFocus={(e) => e.preventDefault()}
-          className="max-w-sm rounded-xl border-line-strong bg-surface-raised backdrop-blur-xs"
-        >
-          <DialogHeader>
-            <DialogTitle className="text-sm">{t.lab.materialStyle}</DialogTitle>
-          </DialogHeader>
-          <ChoiceList className="max-h-64 overflow-y-auto overscroll-contain">
-            <button
-              data-current={pickedMaterialStyle === null}
-              onClick={() => {
-                setMaterialGraphPicker(false)
-                if (castEntry && pickedMaterial) setMaterialGraph(castEntry.id, pickedMaterial, null)
-              }}
-              className={cn(
-                "flex w-full cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-white/5",
-                pickedMaterialStyle === null ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {t.lab.materialStyleClear}
-              {pickedMaterialStyle === null && <Check className="size-3.5 shrink-0 text-pink-400" />}
-            </button>
-            {MATERIAL_GRAPHS.map((g) => (
-              <button
-                key={g.name}
-                data-current={g.name === pickedMaterialStyle}
-                onClick={() => {
-                  setMaterialGraphPicker(false)
-                  if (castEntry && pickedMaterial) setMaterialGraph(castEntry.id, pickedMaterial, g.name)
-                }}
-                className={cn(
-                  "flex w-full cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-white/5",
-                  g.name === pickedMaterialStyle ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {g.name}
-                {g.name === pickedMaterialStyle && <Check className="size-3.5 shrink-0 text-pink-400" />}
-              </button>
-            ))}
-          </ChoiceList>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={langOpen} onOpenChange={setLangOpen}>
         <DialogContent

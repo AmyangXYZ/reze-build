@@ -20,11 +20,11 @@
 // this tool's whole promise is that it does not do that.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react"
-import { ChevronDown } from "lucide-react"
 import type { PmxBone, PmxDocument, PmxMaterial } from "reze-engine"
 import type { BonePatch, MaterialPatch } from "@/lib/pmx-edits"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ColorField } from "@/components/color-picker"
 import { rgbToHex, hexToRgba } from "@/lib/color"
 import { assetUrl } from "@/lib/scene"
@@ -436,11 +436,32 @@ function BoneFields({ bone, doc, edit }: { bone: PmxBone; doc: PmxDocument; edit
   )
 }
 
+/** Every preset's own catalog name starts with its family — "AG Body", "WuWa
+ *  Hair", "ZZZ Eye" — so the family IS the first word, with no lookup table to
+ *  keep in step as a new one (Star Rail, say) joins the shelf. Grouped rather
+ *  than flattened: nineteen names in one list is a scroll to read, four short
+ *  sections under their own headings is a shelf. */
+function byFamily(names: readonly string[]): [string, string[]][] {
+  const groups = new Map<string, string[]>()
+  for (const name of names) {
+    const family = name.split(" ")[0]
+    const list = groups.get(family)
+    if (list) list.push(name)
+    else groups.set(family, [name])
+  }
+  return [...groups]
+}
+
+/** No shader graph is named "", so this is a sentinel Radix can hold as a real
+ *  item value — an empty string is the one value SelectItem refuses. */
+const NO_STYLE = " none"
+
 function MaterialFields({
   material,
   doc,
   src,
   style,
+  materialGraphs,
   onPickStyle,
   edit,
 }: {
@@ -450,9 +471,12 @@ function MaterialFields({
   /** The built-in preset graph this material's style group renders through, or
    *  null when it is ungrouped (or the group has no graph). */
   style: string | null
-  /** Opens the built-in preset picker. A pick, not an edit — the row chooses
-   *  a look off the shelf, it does not open the graph that renders it. */
-  onPickStyle: () => void
+  /** Every pickable preset's catalog name — already filtered to the character
+   *  set (no stage materials) by the caller, which owns the library. */
+  materialGraphs: readonly string[]
+  /** A pick off the shelf, never a graph edit — null clears back to the PMX
+   *  fields below actually drawing again. */
+  onPickStyle: (name: string | null) => void
   edit: EditMaterial
 }) {
   const tex = (i: number) => (i < 0 || i >= doc.textures.length ? null : doc.textures[i])
@@ -467,19 +491,34 @@ function MaterialFields({
         {/* First — everything below this line does nothing for a grouped
             material's colour and shading, since the group's compiled graph is
             what actually draws, not the PMX fields. Naming the graph here is
-            what stops that from looking like a silent failure. A real button
-            now, not a drawn one: picking a built-in preset is a SWITCH, same
-            standing as the whole-model shelf, never a graph edit. The border
-            below is what closes it off from Name, which starts the typed
-            fields. */}
+            what stops that from looking like a silent failure. A real Select,
+            not a drawn button — picking a built-in preset is a SWITCH, same
+            standing as the whole-model shelf, never a graph edit; sectioned by
+            family (AG/WuWa/ZZZ/...) so nineteen names read as four short
+            shelves instead of one scroll. The border below is what closes it
+            off from Name, which starts the typed fields. */}
         <Field label="Style" className="pb-1.5 border-b border-line">
-          <button
-            onClick={onPickStyle}
-            className="flex h-4 min-w-0 items-center gap-1 rounded border border-line-strong bg-white/[0.04] px-1.5 transition-colors hover:border-white/25 hover:bg-white/[0.06]"
-          >
-            <span className={cn("min-w-0 flex-1 truncate text-left", !style && "text-muted-foreground")}>{style ?? "—"}</span>
-            <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-          </button>
+          <Select value={style ?? NO_STYLE} onValueChange={(v) => onPickStyle(v === NO_STYLE ? null : v)}>
+            <SelectTrigger
+              size="sm"
+              className="h-4 w-full min-w-0 gap-1 rounded border-line-strong bg-white/[0.04] px-1.5 py-0 text-[11px] data-[size=sm]:h-4"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_STYLE}>None (PMX colours)</SelectItem>
+              {byFamily(materialGraphs).map(([family, names]) => (
+                <SelectGroup key={family}>
+                  <SelectLabel>{family}</SelectLabel>
+                  {names.map((name) => (
+                    <SelectItem key={name} value={name}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
         <Field label="Name">
           <TextCell value={material.name} onCommit={(v) => edit({ rename: v })} />
@@ -557,6 +596,7 @@ export function PmxInspector({
   bone,
   material,
   materialStyle,
+  materialGraphs,
   onPickStyle,
   files,
   baseDir,
@@ -571,10 +611,11 @@ export function PmxInspector({
   /** The built-in preset graph the picked material's style group renders
    *  through, or null when it is ungrouped. */
   materialStyle: string | null
-  /** Opens the built-in preset picker for the currently picked material. The
-   *  panel does not own that list — it just asks the host to show it, the
-   *  same way onClose asks the host to let go of the selection. */
-  onPickStyle: () => void
+  /** Every pickable preset's catalog name, already filtered to the character
+   *  set — the panel does not own the library, it just draws what it is given. */
+  materialGraphs: readonly string[]
+  /** A pick off the shelf, never a graph edit — null clears back to ungrouped. */
+  onPickStyle: (name: string | null) => void
   /** Everything that arrived with the .pmx — the disk-opened case. */
   files: File[]
   /** The .pmx's own directory — the served case. */
@@ -624,6 +665,7 @@ export function PmxInspector({
             doc={doc}
             src={src}
             style={materialStyle}
+            materialGraphs={materialGraphs}
             onPickStyle={onPickStyle}
             edit={(p) => onEditMaterial({ ...p, name: materialEntry!.name })}
           />
