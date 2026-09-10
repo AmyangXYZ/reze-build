@@ -4277,7 +4277,7 @@ export default function Lab() {
 
   /** The curated first-open scene, assets included — under the id this scene already
    *  has, because Reset restates what THIS document is rather than starting another. */
-  const resetSceneDefaults = () => {
+  const resetSceneDefaults = async () => {
     // The demo IS the default style: its groups and its world are the Aether
     // Gazer set. Leaving the remembered style on something else would restore
     // the demo and then dress the next model you loaded in a style the cast in
@@ -4306,7 +4306,10 @@ export default function Lab() {
     void clearLocalBundle()
     // Same reasoning again: a split or a rename saved under the demo's own
     // model id must not survive the very reset that is supposed to undo it.
-    for (const m of DEMO_SCENE.assets.models) void clearDocument(m.model.id)
+    // AWAITED — applyLabScene's own reload reads this same store, and a
+    // fire-and-forget clear here could still be mid-flight when it checks,
+    // which is exactly a reset that does not work.
+    await Promise.all(DEMO_SCENE.assets.models.map((m) => clearDocument(m.model.id)))
     saveSceneAssets(scene.state.id, assetsDocOf(DEMO_SCENE.assets))
     void applyLabScene({ ...DEMO_SCENE, state: { ...DEMO_SCENE.state, id: scene.state.id } })
   }
