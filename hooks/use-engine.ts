@@ -4,7 +4,22 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { EFFECTS } from "@/lib/effects"
-import { Engine, parseLRC, parseMidi, Quat, Vec3, type GizmoDragEvent, type Model, type RenderClass, type MidiNote, type StyleGroup, type LyricLine } from "reze-engine"
+import {
+  Engine,
+  parseLRC,
+  parseMidi,
+  writePmxDocument,
+  PmxLoader,
+  Quat,
+  Vec3,
+  type GizmoDragEvent,
+  type Model,
+  type PmxDocument,
+  type RenderClass,
+  type MidiNote,
+  type StyleGroup,
+  type LyricLine,
+} from "reze-engine"
 import { clipTrimmedToMotion } from "@/lib/clip"
 import { rasterizeLyrics } from "@/lib/lyrics-raster"
 import { SLOT_GRAPHS } from "@/lib/materials"
@@ -15,6 +30,7 @@ import { idbBundleId, modelKey, modelPmxUrl, type AssetRef, type Scene, type Sce
 import { unzipToFiles } from "@/lib/uploads"
 import { loadLocalBundle, sweepRetiredBundles } from "@/lib/asset-store"
 import { sceneFiles } from "@/lib/scene-files"
+import { clearDocument, loadDocument } from "@/lib/document-store"
 import { BACKDROP_VIDEO_RE, openAnimatedImage } from "@/lib/backdrop"
 import { createMediaFollower, type MediaFollower } from "@/lib/media-clock"
 import { azElToDirection, hexToLinearVec3, hexToSrgbVec3 } from "@/lib/scene-settings"
@@ -245,6 +261,11 @@ async function loadSceneInto(engine: Engine, scene: Scene, stale: () => boolean,
 
   for (const entry of scene.assets.models) {
     const src = entry.model.source
+    // A saved edit outranks the original bytes — this is what makes a split
+    // or a rename made in an earlier session still be there on this load,
+    // rather than the pristine document that session's own edits quietly
+    // never reached.
+    const saved = await loadDocument(entry.model.id)
     let model
     if (src.kind === "bundle") {
       const pmxFile = bundle?.find((f) => f.name === src.path)
@@ -259,16 +280,29 @@ async function loadSceneInto(engine: Engine, scene: Scene, stale: () => boolean,
       // texture basename, and the engine's basename fallback would guess.
       const dir = src.path.slice(0, src.path.lastIndexOf("/") + 1)
       const files = bundle!.filter((f) => f.name.startsWith(dir))
+      // Same name either way, so texture-relative paths inside the folder
+      // keep resolving exactly as they did before any edit.
+      const pmx = saved ? new File([writePmxDocument(saved)], pmxFile.name) : pmxFile
       // A stage has to go in through the stage door, or it comes back as an
       // ordinary cast member: physics, IK, a spawn offset, and no ground
       // suppression. The document's `stage` flag is the only thing that knows.
       model = entry.stage
-        ? await engine.loadStage(entry.model.id, { files, pmxFile })
-        : await engine.loadModel(entry.model.id, { files, pmxFile })
+        ? await engine.loadStage(entry.model.id, { files, pmxFile: pmx })
+        : await engine.loadModel(entry.model.id, { files, pmxFile: pmx })
     } else {
       const pmxUrl = modelPmxUrl(entry.model)
       if (!pmxUrl) throw new Error(`Zip-sourced models aren't loadable from a URL yet: ${entry.model.file}`)
-      model = await engine.loadModel(entry.model.id, pmxUrl)
+      if (saved) {
+        // A served folder or a zip archive has no local Files to rebuild
+        // from — parse the edited bytes directly and keep pointing textures
+        // at the ORIGINAL url; addModel's own fetch-based reader takes it
+        // from there, exactly as the untouched load would have.
+        model = PmxLoader.loadFromBuffer(writePmxDocument(saved))
+        model.setName(entry.model.id)
+        await engine.addModel(model, pmxUrl, entry.model.id)
+      } else {
+        model = await engine.loadModel(entry.model.id, pmxUrl)
+      }
     }
     if (stale()) return null
     // Hidden until styled: the first visible frame wears the scene's shader
@@ -875,6 +909,11 @@ export function useEngine(
           onGizmoDrag: (event) => viewportRef.current.onGizmoDrag?.(event),
         })
         engineRef.current = engine
+        // Blender's binding, not the engine's own default — every OTHER
+        // consumer of reze-engine keeps left-click-to-orbit unless it asks
+        // for this too. Only this build wants the left button free for its
+        // own gesture (a box-select drag).
+        engine.setCameraOrbitButton("middle")
         // Dev-only console handle — lets new engine APIs be exercised before any UI exists (e.g.
         if (process.env.NODE_ENV === "development") (window as unknown as { __reze?: Engine }).__reze = engine
         // …and the built-in sources beside it, keyed by name. The effects are
@@ -994,6 +1033,9 @@ export function useEngine(
       delete next[modelId]
       return next
     })
+    // A gone model's saved edits are residue, not history — see
+    // clearDocument for why leaving them is the wrong default.
+    void clearDocument(modelId)
   }, [])
 
   const uniqueModelId = (pmxName: string, except?: string): string =>
@@ -1299,6 +1341,86 @@ export function useEngine(
       return id
     },
     [],
+  )
+
+  /**
+   * Rebuild a model's LIVE render from an edited in-memory document — the
+   * same id, the same textures, current style groups carried forward rather
+   * than re-auto-detected, and no frame where the model is simply gone.
+   *
+   * A structural document edit (a material split, say) only ever lands in
+   * `pmxDoc`, the source of truth an export reads — nothing pushes it to the
+   * engine's own Model, which was built once from the ORIGINAL bytes at
+   * load. This is the same loader path every model already goes through
+   * rather than a second way to mutate a live Model's materials and index
+   * buffer that would need its own testing to trust — just fed the edited
+   * bytes instead of the original ones.
+   *
+   * The load itself is async (parse, GPU upload, texture decode); removing
+   * the current model before it finishes would leave a gap of however many
+   * frames that takes, and it visibly flashes. So the replacement loads
+   * under a THROWAWAY key while the current one keeps rendering untouched,
+   * hidden the instant it exists (no `await` in between, so no frame ever
+   * sees it loose), styled while still hidden, and only THEN swapped in —
+   * remove the old, rename the staged one to `modelId` — two synchronous
+   * calls with nothing async between them.
+   *
+   * Two sources for the bytes, matching the two ways a model got here: a
+   * locally-held bundle (uploaded files, present in sceneFiles.models) —
+   * rebuild the .pmx File and reload from the whole bundle, same as any
+   * other file-based load — or a served folder (the bundled demo, e.g.),
+   * which has no local Files to rebuild from: parse the edited bytes
+   * directly with PmxLoader and hand the model to addModel with the
+   * ORIGINAL served directory, so its textures still resolve exactly where
+   * the first load found them.
+   *
+   * A no-op for anything else (a zip-sourced or already-published model) —
+   * the document edit still lands and still exports correctly, only the
+   * canvas does not catch up until reload.
+   */
+  const reloadModelDocument = useCallback(
+    async (modelId: string, doc: PmxDocument): Promise<void> => {
+      const engine = engineRef.current
+      if (!engine) return
+      const bytes = writePmxDocument(doc)
+      const existing = sceneFiles.models.get(modelId)
+      const transform = engine.getModelTransform(modelId)
+      const stagingId = `${modelId}__reload`
+
+      let model: Model
+      let displayName: string
+      if (existing) {
+        const pmxFile = new File([bytes], existing.pmx.name)
+        const files = [pmxFile, ...existing.files.filter((f) => f !== existing.pmx)]
+        model = await engine.loadModel(stagingId, { files, pmxFile })
+        displayName = pmxBaseName(pmxFile.name)
+        // The bundle it will actually answer to once the swap below lands.
+        sceneFiles.models.set(modelId, { pmx: pmxFile, files })
+      } else {
+        const ref = sceneRef.current.assets.models.find((m) => m.model.id === modelId)?.model
+        if (!ref || ref.source.kind !== "folder") return
+        model = PmxLoader.loadFromBuffer(bytes)
+        model.setName(stagingId)
+        await engine.addModel(model, `${ref.source.dir}/${ref.file}`, stagingId)
+        displayName = ref.file
+      }
+
+      // Hidden the instant it exists — nothing above this line awaited
+      // since, so no frame has run with it out in the open yet.
+      engine.setModelTransform(stagingId, { visible: false })
+      const groups = groupsByModel[modelId]
+      if (groups?.length) {
+        reportGroups("reload", await engine.applyStyleGroups(stagingId, groups.filter((g) => g.materials.length > 0)))
+      }
+
+      // The swap itself: nothing async between these two, so there is no
+      // frame with the old model gone and the new one not yet in its place.
+      engine.removeModel(modelId)
+      engine.renameModel(stagingId, modelId)
+      if (transform) engine.setModelTransform(modelId, transform)
+      setModels((prev) => prev.map((m) => (m.id === modelId ? infoFor(modelId, displayName, model) : m)))
+    },
+    [groupsByModel],
   )
 
   /**
@@ -1635,6 +1757,17 @@ export function useEngine(
     [],
   )
 
+  const toggleMaterialVisible = useCallback((modelId: string, materialName: string) => {
+    engineRef.current?.toggleMaterialVisible(modelId, materialName)
+    setModels((prev) =>
+      prev.map((m) =>
+        m.id !== modelId
+          ? m
+          : { ...m, materials: m.materials.map((x) => (x.name === materialName ? { ...x, visible: !x.visible } : x)) },
+      ),
+    )
+  }, [])
+
   const stopAnimation = useCallback((modelId: string) => {
     const model = engineRef.current?.getModel(modelId)
     if (!model) return
@@ -1675,8 +1808,10 @@ export function useEngine(
     swapScene,
     setCameraView,
     setGroupParam,
+    toggleMaterialVisible,
     addModelFromFiles,
     replaceModelFromFiles,
+    reloadModelDocument,
     removeModelById,
     loadVmdFile,
     loadVmdUrl,

@@ -220,6 +220,136 @@ export function setBones(doc: PmxDocument, params: SetBonesParams): EditResult {
   }
 }
 
+export interface SplitMaterialParams {
+  /** Which material to carve faces out of. */
+  name: string
+  /** Faces to move into the new material, LOCAL to this material's own face
+   *  list — 0 is its first triangle, exactly what the engine's
+   *  selectMaterialFaces returns. Not a name: a face has none to key on. */
+  faceIndices: number[]
+  /** The new material's name. The caller picks one that does not collide —
+   *  this transform does not check, the way renameBones does not either. */
+  newName: string
+  /** Renames the material's OWN remaining half too. Optional: a caller that
+   *  only wants to carve a piece off, leaving what is left behind under its
+   *  original name, can omit it. */
+  keptName?: string
+}
+
+/**
+ * Splits a subset of one material's own faces into a new material, appended
+ * at the END of the document.
+ *
+ * Appended there and nowhere else: PMX material MORPHS address a material by
+ * INDEX (`{kind: "material", index}`), so inserting the new one anywhere but
+ * the end would silently repoint every morph that targets a material after
+ * it. A material nothing has referenced yet has nothing to repair.
+ *
+ * No vertex is touched, moved, or duplicated — only which triangles belong
+ * to which material. A material owns a CONTIGUOUS run of the shared index
+ * buffer, so splitting is partitioning that run in place (kept faces stay,
+ * in order) and appending the carved-out half as its own run at the buffer's
+ * end, which is also where the new material's position in the list expects
+ * its faces to start.
+ */
+export function splitMaterial(doc: PmxDocument, params: SplitMaterialParams): EditResult {
+  const { name, faceIndices, newName, keptName } = params
+  const index = doc.materials.findIndex((m) => m.name === name)
+  if (index < 0) return { document: doc, summary: "Changed nothing", missing: [name] }
+
+  const original = doc.materials[index]
+  const faceCount = original.indexCount / 3
+  const wanted = new Set(faceIndices.filter((f) => f >= 0 && f < faceCount))
+  if (wanted.size === 0) return { document: doc, summary: "Changed nothing", missing: [] }
+
+  let start = 0
+  for (let i = 0; i < index; i++) start += doc.materials[i].indexCount
+
+  const kept: number[] = []
+  const split: number[] = []
+  for (let f = 0; f < faceCount; f++) {
+    const i = start + f * 3
+    const dest = wanted.has(f) ? split : kept
+    dest.push(doc.indices[i], doc.indices[i + 1], doc.indices[i + 2])
+  }
+
+  const indices = new Uint32Array(doc.indices.length)
+  indices.set(doc.indices.subarray(0, start))
+  indices.set(kept, start)
+  indices.set(doc.indices.subarray(start + original.indexCount), start + kept.length)
+  indices.set(split, indices.length - split.length)
+
+  const materials = doc.materials.slice()
+  materials[index] = { ...original, indexCount: kept.length, name: keptName ?? original.name }
+  materials.push({ ...original, name: newName, nameEn: "", indexCount: split.length })
+
+  return {
+    document: { ...doc, indices, materials },
+    summary: `Split ${split.length / 3} faces from ${name} into ${newName}`,
+    missing: [],
+  }
+}
+
+export interface DeleteMaterialFacesParams {
+  /** Which material to remove faces from. */
+  name: string
+  /** Faces to remove, LOCAL to this material's own face list — the same
+   *  numbers selectMaterialFaces returns and splitMaterial takes. A face has
+   *  no name of its own to key on instead. */
+  faceIndices: number[]
+}
+
+/**
+ * Removes a subset of one material's own faces from the document.
+ *
+ * Vertices are left exactly alone — a face is three INDICES into the vertex
+ * array, and removing a face never removes the vertices it pointed to, only
+ * the triangle. A vertex no longer referenced by anything is a stray, not a
+ * corruption: reindexing the vertex array to drop it would renumber every
+ * vertex after it, and vertex morphs store `vertexIndex` — the one thing
+ * this document can never let shift under an edit that was not asked to
+ * touch it.
+ *
+ * Only this material's own run of the shared index buffer changes; every
+ * other material's faces, and their own position in it, move only insofar
+ * as the buffer is now shorter starting from here — the same implicit
+ * shift splitMaterial's own comment explains, just backwards.
+ */
+export function deleteMaterialFaces(doc: PmxDocument, params: DeleteMaterialFacesParams): EditResult {
+  const { name, faceIndices } = params
+  const index = doc.materials.findIndex((m) => m.name === name)
+  if (index < 0) return { document: doc, summary: "Changed nothing", missing: [name] }
+
+  const material = doc.materials[index]
+  const faceCount = material.indexCount / 3
+  const drop = new Set(faceIndices.filter((f) => f >= 0 && f < faceCount))
+  if (drop.size === 0) return { document: doc, summary: "Changed nothing", missing: [] }
+
+  let start = 0
+  for (let i = 0; i < index; i++) start += doc.materials[i].indexCount
+
+  const kept: number[] = []
+  for (let f = 0; f < faceCount; f++) {
+    if (drop.has(f)) continue
+    const i = start + f * 3
+    kept.push(doc.indices[i], doc.indices[i + 1], doc.indices[i + 2])
+  }
+
+  const indices = new Uint32Array(doc.indices.length - drop.size * 3)
+  indices.set(doc.indices.subarray(0, start))
+  indices.set(kept, start)
+  indices.set(doc.indices.subarray(start + material.indexCount), start + kept.length)
+
+  const materials = doc.materials.slice()
+  materials[index] = { ...material, indexCount: kept.length }
+
+  return {
+    document: { ...doc, indices, materials },
+    summary: `Deleted ${drop.size} faces from ${name}`,
+    missing: [],
+  }
+}
+
 /**
  * A patch against the document's own header — the model's name and comment,
  * in both languages PMX carries them. Not batch-shaped like the others: there

@@ -20,6 +20,7 @@
 // this tool's whole promise is that it does not do that.
 
 import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { Eye, EyeOff } from "lucide-react"
 import type { PmxBone, PmxDocument, PmxMaterial } from "reze-engine"
 import type { BonePatch, MaterialPatch } from "@/lib/pmx-edits"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
@@ -463,6 +464,7 @@ function MaterialFields({
   style,
   materialGraphs,
   onPickStyle,
+  selectedFaceCount,
   edit,
 }: {
   material: PmxMaterial
@@ -477,6 +479,11 @@ function MaterialFields({
   /** A pick off the shelf, never a graph edit — null clears back to the PMX
    *  fields below actually drawing again. */
   onPickStyle: (name: string | null) => void
+  /** How many faces the last drag caught. Dragging on the canvas box-selects
+   *  this material's faces the moment it is picked — no arming step, since
+   *  the left mouse button never means orbit here (that's the middle one).
+   *  Split/Delete live on the canvas's own right-click menu, not here. */
+  selectedFaceCount: number
   edit: EditMaterial
 }) {
   const tex = (i: number) => (i < 0 || i >= doc.textures.length ? null : doc.textures[i])
@@ -529,6 +536,18 @@ function MaterialFields({
         {/* Faces, not indices. The document counts indices because that is what
             a material owns, but nobody thinks in threes. */}
         <Field label="Faces">{(material.indexCount / 3).toLocaleString()}</Field>
+        {/* No arming step: the left button already means this the moment a
+            material is picked (orbit moved to the middle button precisely so
+            it would never have to share). Right-click a selection for what
+            it can become — Split and Delete live in that menu, not here. */}
+        <Field label="Select">
+          <span className="text-muted-foreground">Drag on canvas</span>
+        </Field>
+        {selectedFaceCount > 0 && (
+          <Field label="Selected">
+            <span className="text-muted-foreground">{selectedFaceCount.toLocaleString()} faces — right-click for actions</span>
+          </Field>
+        )}
         <Field label="Flags">
           <FlagCells bits={material.drawFlags} names={MATERIAL_FLAGS} onCommit={(v) => edit({ drawFlags: v })} />
         </Field>
@@ -598,6 +617,9 @@ export function PmxInspector({
   materialStyle,
   materialGraphs,
   onPickStyle,
+  materialVisible,
+  onToggleMaterialVisible,
+  selectedFaceCount,
   files,
   baseDir,
   onEditBone,
@@ -616,6 +638,14 @@ export function PmxInspector({
   materialGraphs: readonly string[]
   /** A pick off the shelf, never a graph edit — null clears back to ungrouped. */
   onPickStyle: (name: string | null) => void
+  /** Scene state, not a document field — a hide is not one of the bytes that
+   *  round-trip, so it lives beside the style groups rather than in setMaterials. */
+  materialVisible: boolean
+  onToggleMaterialVisible: () => void
+  /** How many faces the canvas's own box-select drag last caught for this
+   *  material — see MaterialFields for why there is no arming step, and the
+   *  canvas's right-click menu for what a selection can become. */
+  selectedFaceCount: number
   /** Everything that arrived with the .pmx — the disk-opened case. */
   files: File[]
   /** The .pmx's own directory — the served case. */
@@ -646,6 +676,19 @@ export function PmxInspector({
         <span className="min-w-0 flex-1 truncate text-xs font-medium" title={subject.name}>
           {subject.name}
         </span>
+        {materialEntry && (
+          <button
+            onClick={onToggleMaterialVisible}
+            aria-pressed={!materialVisible}
+            aria-label={materialVisible ? "Hide material" : "Show material"}
+            className={cn(
+              "shrink-0 rounded-chip p-0.5 transition-colors",
+              !materialVisible ? "bg-blue-400/15 text-blue-400" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {materialVisible ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
+          </button>
+        )}
         <button
           onClick={onClose}
           aria-label={closeLabel}
@@ -667,6 +710,7 @@ export function PmxInspector({
             style={materialStyle}
             materialGraphs={materialGraphs}
             onPickStyle={onPickStyle}
+            selectedFaceCount={selectedFaceCount}
             edit={(p) => onEditMaterial({ ...p, name: materialEntry!.name })}
           />
         )}

@@ -34,6 +34,8 @@ import {
   ArrowUpFromLine,
   Bone,
   Boxes,
+  Eye,
+  EyeOff,
   CircleUserRound,
   Link2,
   Layers,
@@ -116,8 +118,17 @@ import { useStoredRect } from "@/hooks/use-stored-rect"
 import { useDockSlot } from "@/hooks/use-dock-slot"
 import { useZOrder } from "@/hooks/use-z-order"
 import { PmxInspector } from "@/components/editor/pmx-inspector"
-import { setBones, setMaterials, setModelInfo, type BonePatch, type MaterialPatch, type ModelInfoPatch } from "@/lib/pmx-edits"
-import { saveDocument } from "@/lib/document-store"
+import {
+  deleteMaterialFaces,
+  setBones,
+  setMaterials,
+  setModelInfo,
+  splitMaterial,
+  type BonePatch,
+  type MaterialPatch,
+  type ModelInfoPatch,
+} from "@/lib/pmx-edits"
+import { clearDocument, loadDocument, saveDocument } from "@/lib/document-store"
 import { DEFAULT_SCENE, DEMO_SCENE, EMPTY_SCENE } from "@/lib/default-scene"
 import {
   assetsDocOf,
@@ -667,12 +678,23 @@ function ModelDescription({ value, placeholder, onCommit }: { value: string; pla
 function ModeToolbar({
   mode,
   onPick,
+  overlayHidden,
+  onToggleOverlay,
 }: {
   mode: string | null
   onPick: (mode: string | null) => void
+  /** Whether the active section's overlay is currently suppressed. Meaningless
+   *  in Camera mode — nothing draws an overlay there either way — so the
+   *  button is disabled rather than absent (see the render for why absent
+   *  is the wrong call for a centred pill). */
+  overlayHidden: boolean
+  onToggleOverlay: () => void
 }) {
-  const modes: { id: string | null; icon: ComponentType<{ className?: string }>; label: string }[] = [
-    { id: null, icon: Camera, label: "Camera" },
+  // No Camera entry: orbit/pan/zoom live on the mouse now (middle, right,
+  // scroll), not on a mode, so there is nothing left for a Camera button to
+  // unlock. Clicking the active one a second time is what gets back to
+  // "nothing picked, no overlay" — the state Camera used to be the only door to.
+  const modes: { id: string; icon: ComponentType<{ className?: string }>; label: string }[] = [
     { id: "bones", icon: Bone, label: "Bones" },
     { id: "materials", icon: MaterialSphereIcon, label: "Materials" },
   ]
@@ -684,7 +706,7 @@ function ModeToolbar({
             <button
               aria-pressed={mode === id}
               aria-label={label}
-              onClick={() => onPick(id)}
+              onClick={() => onPick(mode === id ? null : id)}
               className={cn(
                 "flex size-7 items-center justify-center rounded-lg transition-colors",
                 mode === id ? "bg-blue-400/15 text-blue-400" : "text-muted-foreground hover:bg-white/5 hover:text-foreground",
@@ -696,6 +718,29 @@ function ModeToolbar({
           <TooltipContent>{label}</TooltipContent>
         </Tooltip>
       ))}
+      <span className="mx-0.5 h-5 w-px shrink-0 bg-white/10" />
+      {/* Always rendered, never removed — this pill is centred by translating
+          it -50% of its own width, so a segment that came and went with mode
+          would shift the WHOLE toolbar (mode buttons included) every time
+          Camera was picked, landing the next click wherever it drifted to.
+          Disabled rather than absent when there is no overlay to hide. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            disabled={!mode}
+            aria-pressed={overlayHidden}
+            aria-label={overlayHidden ? "Show overlay" : "Hide overlay"}
+            onClick={onToggleOverlay}
+            className={cn(
+              "flex size-7 items-center justify-center rounded-lg transition-colors disabled:pointer-events-none disabled:opacity-30",
+              overlayHidden ? "bg-blue-400/15 text-blue-400" : "text-muted-foreground hover:bg-white/5 hover:text-foreground",
+            )}
+          >
+            {overlayHidden ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>{overlayHidden ? "Show overlay" : "Hide overlay"}</TooltipContent>
+      </Tooltip>
     </div>
   )
 }
@@ -1410,6 +1455,23 @@ const newGroupId = (material: string, groups: StyleGroup[]): string => {
   return `${base}-${i}`
 }
 
+/** Names for the two halves splitMaterial produces — readable, unlike
+ *  newGroupId's kebab id, since this is what each half is CALLED in the
+ *  document, not an internal key. Both carry the split in their name (the
+ *  KEPT half is renamed too, not left as the original) so two materials
+ *  that used to be one read as siblings in a list rather than one
+ *  unchanged entry and one mystery addition. Falls back to a numbered
+ *  suffix only on an actual collision — a model does not ordinarily
+ *  already have "<name>_split_1" twice. */
+const splitMaterialName = (base: string, half: 1 | 2, existing: readonly string[]): string => {
+  const names = new Set(existing)
+  const want = `${base}_split_${half}`
+  if (!names.has(want)) return want
+  let i = 2
+  while (names.has(`${want}_${i}`)) i++
+  return `${want}_${i}`
+}
+
 /**
  * How a new draft relates to whatever it was edited from: your own published
  * item (publishing updates it) or someone else's (publishing forks it). Neither,
@@ -1898,6 +1960,8 @@ export default function Lab() {
     setCameraView,
     swapScene,
     applyGroups,
+    toggleMaterialVisible,
+    reloadModelDocument,
   } = useEngine(scene)
   // No byte stats here. The editor's scene comes out of IndexedDB or off the
   // local disk in almost every case, so a download line would be a phase the
@@ -2498,6 +2562,11 @@ export default function Lab() {
   // what that model actually contains.
   const [pmxDoc, setPmxDoc] = useState<PmxDocument | null>(null)
   const [openModelRow, setOpenModelRow] = useState<string | null>(null)
+  // Orthogonal to the mode: a section's overlay can be in the way of judging
+  // an edit's actual result (a wireframe sitting over a colour you just
+  // changed) without wanting to leave the section — picking still works
+  // hidden, since it raycasts the mesh rather than reading the overlay.
+  const [overlayHidden, setOverlayHidden] = useState(false)
   // Which item the open section has narrowed to. Null is the section's own
   // answer — all of them — so opening a section is already an answer and
   // picking a row refines one rather than starting one.
@@ -2526,6 +2595,10 @@ export default function Lab() {
     const group = (groupsByModel[castEntry.id] ?? []).find((g) => g.materials.includes(pickedMaterial))
     return group?.graph?.name ?? null
   }, [pickedMaterial, castEntry, groupsByModel])
+  const pickedMaterialVisible = useMemo(() => {
+    if (!pickedMaterial || !castEntry) return true
+    return castEntry.materials.find((m) => m.name === pickedMaterial)?.visible ?? true
+  }, [pickedMaterial, castEntry])
   // The FILE name, in the header and in the row alike.
   //
   // Not the PMX `name` field: the two disagree on most models — an author's
@@ -2542,6 +2615,14 @@ export default function Lab() {
     let stale = false
     void (async () => {
       try {
+        // A saved edit outranks the original source — this is what makes a
+        // split or a rename survive a refresh, rather than reading back the
+        // pristine bytes every reload quietly discarded.
+        const saved = castEntry ? await loadDocument(castEntry.id) : null
+        if (!stale && saved) {
+          setPmxDoc(saved)
+          return
+        }
         const entry = scene.assets.models.find((m) => m.model.id === castEntry?.id)
         const source = entry?.model.source
         // Three ways a model's bytes can actually be reachable, matching
@@ -2570,7 +2651,12 @@ export default function Lab() {
     return () => {
       stale = true
     }
-  }, [castFile, castEntry, scene.assets.models, bundleFile])
+    // castEntry?.id, not castEntry itself: a reload (a split, say) rebuilds
+    // that object with a fresh identity for the SAME model, and re-running
+    // this on every incidental reference change meant a split's own reload
+    // could race this effect's re-fetch of the original, pre-edit bytes —
+    // the id is what actually says whether there is new work to do.
+  }, [castFile, castEntry?.id, scene.assets.models, bundleFile])
 
   // The open section IS the overlay. A section names a part of the model, and
   // the only way to see which faces a material owns or where a joint sits is on
@@ -2590,14 +2676,17 @@ export default function Lab() {
     // and a gizmo straddling the joint hides the very overlay you selected it
     // to look at.
     engine.setGizmoEnabled(false)
-    const id = openModelRow && castEntry ? castEntry.id : null
+    // Hiding the overlay does not leave the section — picking is a raycast
+    // against the real mesh, not a read of what is drawn, so a click still
+    // selects while you are looking at an edit's actual result underneath.
+    const id = openModelRow && castEntry && !overlayHidden ? castEntry.id : null
     const on = (section: string) => (openModelRow === section ? id : null)
     engine.setBoneOverlay(on("bones"))
     engine.setRigidbodyOverlay(on("rigidbodies"))
     engine.setJointOverlay(on("joints"))
     engine.setVertexOverlay(on("materials"), { material: pickedMaterial })
     engine.setSelectedBone(on("bones"), pickedBone)
-  }, [engineRef, ready, openModelRow, castEntry, pickedMaterial, pickedBone])
+  }, [engineRef, ready, openModelRow, castEntry, pickedMaterial, pickedBone, overlayHidden])
 
   /**
    * An edit from the inspector: run the named transform, keep what it returns.
@@ -2618,10 +2707,10 @@ export default function Lab() {
         if (!doc) return doc
         const next = run(doc).document
         if (next === doc) return doc
-        void saveDocument(next)
+        if (castEntry) void saveDocument(castEntry.id, next)
         return next
       }),
-    [],
+    [castEntry],
   )
   /**
    * The document is always written — it is what an export reads, so an edit
@@ -2667,6 +2756,143 @@ export default function Lab() {
   )
 
   /**
+   * Box-select over the picked material's own faces — the first step toward
+   * split (and, later, any region-based edit). Scoped to ONE material on
+   * purpose: "select an area" only means something once you already know
+   * which material's faces you are carving. Declared here, ahead of pickAt,
+   * for the same reason pickAt itself sits ahead of nothing in particular —
+   * order does not gate anything anymore; see the note below on why.
+   *
+   * No arming step and no camera lock: orbit lives on the middle button and
+   * pan on the right, Blender-style, so the left button was never going to
+   * fight this drag for meaning. The left button IS this drag, the moment a
+   * material is picked — same standing as the plain click pickAt below
+   * already gives it.
+   */
+  const [selectedFaces, setSelectedFaces] = useState<number[]>([])
+  const dragStart = useRef<{ x0: number; y0: number } | null>(null)
+  const [dragRect, setDragRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
+  // A mouse's own click fires on pointerup regardless of how far it moved in
+  // between — a real drag still ends in one, and left unchecked it reaches
+  // pickAt and repicks whatever the release point happened to land on right
+  // after the drag set a selection. Set the moment a drag clears the tap
+  // threshold below, consumed once by the very next pickAt.
+  const didDragSelect = useRef(false)
+  // A plain right-click's own start point, so its pointerup can tell a tap
+  // from a pan drag on OUR threshold, the same way the left button's own
+  // drag/tap split already works below.
+  const rightClickStart = useRef<{ x: number; y: number } | null>(null)
+  const [faceMenu, setFaceMenu] = useState<{ x: number; y: number } | null>(null)
+
+  // The selection belongs to the picked material. Picking a different one
+  // (or leaving Materials) invalidates it the same way a section change
+  // already drops the pick itself.
+  useEffect(() => {
+    setSelectedFaces([])
+    setFaceMenu(null)
+    engineRef.current?.setOverlay("selection", [])
+    engineRef.current?.setSelectionFill(null, null, [])
+  }, [pickedMaterial, castEntry, engineRef])
+
+  // Escape closes the menu the same way an outside click does — standard for
+  // any floating menu, and this one rolls its own rather than inheriting it
+  // from a primitive.
+  useEffect(() => {
+    if (!faceMenu) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFaceMenu(null)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [faceMenu])
+
+  const onSelectPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (e.button === 2) {
+        rightClickStart.current = { x: e.clientX, y: e.clientY }
+        return
+      }
+      // Left only — button 1 (middle) orbits and button 2 (right) pans, at
+      // the camera level, but a POINTER capture here would still start a
+      // marquee under either of them without this: this handler sees every
+      // button's pointerdown, the camera only sees left's absence.
+      if (e.button !== 0 || !castEntry || !pickedMaterial) return
+      e.currentTarget.setPointerCapture(e.pointerId)
+      const rect = e.currentTarget.getBoundingClientRect()
+      const x0 = e.clientX - rect.left
+      const y0 = e.clientY - rect.top
+      dragStart.current = { x0, y0 }
+      setDragRect({ x0, y0, x1: x0, y1: y0 })
+    },
+    [castEntry, pickedMaterial],
+  )
+  const onSelectPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!dragStart.current) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    setDragRect({ ...dragStart.current, x1: e.clientX - rect.left, y1: e.clientY - rect.top })
+  }, [])
+  const onSelectPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (e.button === 2) {
+        const start = rightClickStart.current
+        rightClickStart.current = null
+        // Under a few pixels is a tap, not a pan — same threshold the left
+        // button's own drag/select split uses above.
+        if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 3 && selectedFaces.length > 0) {
+          setFaceMenu({ x: e.clientX, y: e.clientY })
+        }
+        return
+      }
+      const start = dragStart.current
+      dragStart.current = null
+      setDragRect(null)
+      if (!start || !castEntry || !pickedMaterial) return
+      const rect = e.currentTarget.getBoundingClientRect()
+      const x1 = e.clientX - rect.left
+      const y1 = e.clientY - rect.top
+      // Under a few pixels is a tap, not a drag — leaving the current
+      // selection alone rather than collapsing it to nothing on a twitch.
+      if (Math.hypot(x1 - start.x0, y1 - start.y0) < 3) return
+      didDragSelect.current = true
+      const hit = engineRef.current?.selectMaterialFaces(castEntry.id, pickedMaterial, start.x0, start.y0, x1, y1)
+      setSelectedFaces(hit?.faceIndices ?? [])
+      engineRef.current?.setOverlay("selection", hit?.lines ?? [])
+      engineRef.current?.setSelectionFill(castEntry.id, pickedMaterial, hit?.faceIndices ?? [])
+    },
+    [castEntry, pickedMaterial, engineRef, selectedFaces],
+  )
+
+  /** Carve the current selection into a new material, appended after the
+   *  original — see splitMaterial for why the end and not beside it. */
+  const splitPickedMaterial = useCallback(() => {
+    if (!castEntry || !pickedMaterial || !pmxDoc || selectedFaces.length === 0) return
+    const existingNames = pmxDoc.materials.map((m) => m.name)
+    const keptName = splitMaterialName(pickedMaterial, 1, existingNames)
+    const newName = splitMaterialName(pickedMaterial, 2, [...existingNames, keptName])
+    const result = splitMaterial(pmxDoc, { name: pickedMaterial, faceIndices: selectedFaces, newName, keptName })
+    if (result.document === pmxDoc) return
+    editDoc(() => result)
+    void reloadModelDocument(castEntry.id, result.document)
+    setSelectedFaces([])
+    engineRef.current?.setOverlay("selection", [])
+    engineRef.current?.setSelectionFill(null, null, [])
+    setPickedMaterial(newName)
+  }, [castEntry, pickedMaterial, pmxDoc, selectedFaces, editDoc, reloadModelDocument, engineRef])
+
+  /** Remove the current selection outright — see deleteMaterialFaces for why
+   *  the vertices themselves are never touched. */
+  const deleteSelectedFaces = useCallback(() => {
+    if (!castEntry || !pickedMaterial || !pmxDoc || selectedFaces.length === 0) return
+    const result = deleteMaterialFaces(pmxDoc, { name: pickedMaterial, faceIndices: selectedFaces })
+    if (result.document === pmxDoc) return
+    editDoc(() => result)
+    void reloadModelDocument(castEntry.id, result.document)
+    setSelectedFaces([])
+    engineRef.current?.setOverlay("selection", [])
+    engineRef.current?.setSelectionFill(null, null, [])
+  }, [castEntry, pickedMaterial, pmxDoc, selectedFaces, editDoc, reloadModelDocument, engineRef])
+
+  /**
    * Click the model to select what you clicked.
    *
    * The list in the dock and the overlay on the canvas are two views of one
@@ -2683,6 +2909,12 @@ export default function Lab() {
    */
   const pickAt = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
+      // The click a box-select drag's own pointerup still generates — this
+      // is its ONE consumer, so a later plain click is unaffected.
+      if (didDragSelect.current) {
+        didDragSelect.current = false
+        return
+      }
       const engine = engineRef.current
       if (!engine || !castEntry) return
       const rect = e.currentTarget.getBoundingClientRect()
@@ -2717,46 +2949,19 @@ export default function Lab() {
    * A material under the pointer previews as a pick before a click makes it
    * one — see setHoveredMaterial on the engine for what that draws.
    *
-   * Coalesced to one pickMaterial per animation frame rather than one per
-   * pointermove: the raycast walks every triangle, and a trackpad can fire
-   * that event faster than the screen repaints. Only the LATEST position
-   * survives to the frame that actually runs.
+   * The LIST's hover only, not the viewport's. Raycasting on every
+   * pointermove over the model — even coalesced to one pick a frame —
+   * churned the overlay on ordinary looking-around, not just on the way to a
+   * click, and fought the section's own overlay-hide toggle for the same
+   * reason. A dock row is a discrete gesture with a name already in hand, so
+   * it stays.
    */
-  const hoverFrame = useRef<number | null>(null)
-  const hoverPos = useRef<{ x: number; y: number } | null>(null)
-  const hoverAt = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (openModelRow !== "materials" || pickedMaterial !== null) return
-      const rect = e.currentTarget.getBoundingClientRect()
-      hoverPos.current = { x: e.clientX - rect.left, y: e.clientY - rect.top }
-      if (hoverFrame.current !== null) return
-      hoverFrame.current = requestAnimationFrame(() => {
-        hoverFrame.current = null
-        const engine = engineRef.current
-        const pos = hoverPos.current
-        if (!engine || !pos || !castEntry) return
-        const hit = engine.pickMaterial(pos.x, pos.y, { modelName: castEntry.id })
-        engine.setHoveredMaterial(hit ? castEntry.id : null, hit?.materialName ?? null)
-      })
-    },
-    [openModelRow, pickedMaterial, engineRef, castEntry],
-  )
   const clearHover = useCallback(() => {
-    if (hoverFrame.current !== null) {
-      cancelAnimationFrame(hoverFrame.current)
-      hoverFrame.current = null
-    }
     engineRef.current?.setHoveredMaterial(null, null)
   }, [engineRef])
-  // The list's own hover — no raycast, the name is already known. Cancels any
-  // pending viewport hover so the two do not fight over which name lands last.
   const hoverMaterialRow = useCallback(
     (name: string | null) => {
       if (pickedMaterial !== null) return
-      if (hoverFrame.current !== null) {
-        cancelAnimationFrame(hoverFrame.current)
-        hoverFrame.current = null
-      }
       engineRef.current?.setHoveredMaterial(name && castEntry ? castEntry.id : null, name)
     },
     [pickedMaterial, engineRef, castEntry],
@@ -2773,6 +2978,12 @@ export default function Lab() {
   useEffect(() => {
     if (openModelRow !== "materials") setPickedMaterial(null)
     if (openModelRow !== "bones") setPickedBone(null)
+  }, [openModelRow])
+  // Hiding is a "let me see this edit clearly" moment, not a standing
+  // preference — carrying it into the NEXT section (or the next time this one
+  // opens) would make the overlay look broken for whoever forgot it was set.
+  useEffect(() => {
+    setOverlayHidden(false)
   }, [openModelRow])
   const [postTab, setPostTab] = useState<"tone" | "bloom" | "outline">("tone")
   const [lightTab, setLightTab] = useState<"world" | "sun">("world")
@@ -4081,6 +4292,9 @@ export default function Lab() {
     // standing in a scene that no longer names them.
     clearPlanes()
     void clearLocalBundle()
+    // Same reasoning again: a split or a rename saved under the demo's own
+    // model id must not survive the very reset that is supposed to undo it.
+    for (const m of DEMO_SCENE.assets.models) void clearDocument(m.model.id)
     saveSceneAssets(scene.state.id, assetsDocOf(DEMO_SCENE.assets))
     void applyLabScene({ ...DEMO_SCENE, state: { ...DEMO_SCENE.state, id: scene.state.id } })
   }
@@ -4359,10 +4573,63 @@ export default function Lab() {
         ref={canvasRef}
         onClick={pickAt}
         onDoubleClick={deselectAt}
-        onPointerMove={hoverAt}
-        onPointerLeave={clearHover}
-        className="absolute inset-0 h-full w-full touch-none object-contain"
+        onPointerDown={onSelectPointerDown}
+        onPointerMove={onSelectPointerMove}
+        onPointerUp={onSelectPointerUp}
+        className={cn(
+          "absolute inset-0 h-full w-full touch-none object-contain",
+          openModelRow === "materials" && pickedMaterial && "cursor-crosshair",
+        )}
       />
+      {/* A plain menu of our own rather than the ContextMenu primitive: that
+          one only opens off a native `contextmenu` event, and right-click
+          already means pan here (see camera.ts) — getting the browser and a
+          threshold-free drag to agree on when that event should even fire
+          turned out not to be worth chasing. This owns its own open state
+          instead, set directly by the same tap-vs-drag check the left button
+          already uses, and closes on any pointerdown outside it. */}
+      {faceMenu && (
+        <>
+          <div className="fixed inset-0 z-40" onPointerDown={() => setFaceMenu(null)} />
+          <div
+            className="fixed z-50 min-w-40 overflow-hidden rounded-lg border border-white/10 bg-zinc-950/90 p-1 text-xs shadow-float backdrop-blur-xs"
+            style={{ left: faceMenu.x, top: faceMenu.y }}
+          >
+            <button
+              className="flex w-full cursor-pointer items-center rounded-md px-2 py-1.5 text-left text-foreground outline-none hover:bg-white/[0.06]"
+              onClick={() => {
+                setFaceMenu(null)
+                splitPickedMaterial()
+              }}
+            >
+              Split into new material
+            </button>
+            <button
+              className="flex w-full cursor-pointer items-center rounded-md px-2 py-1.5 text-left text-red-400 outline-none hover:bg-red-400/10"
+              onClick={() => {
+                setFaceMenu(null)
+                deleteSelectedFaces()
+              }}
+            >
+              Delete {selectedFaces.length} {selectedFaces.length === 1 ? "face" : "faces"}
+            </button>
+          </div>
+        </>
+      )}
+      {/* The marquee itself — screen-space, drawn over the canvas rather than
+          asked of the engine, since it never needs the camera or the mesh,
+          only the two points a drag already has. */}
+      {dragRect && (
+        <div
+          className="pointer-events-none absolute border border-blue-400 bg-blue-400/10"
+          style={{
+            left: Math.min(dragRect.x0, dragRect.x1),
+            top: Math.min(dragRect.y0, dragRect.y1),
+            width: Math.abs(dragRect.x1 - dragRect.x0),
+            height: Math.abs(dragRect.y1 - dragRect.y0),
+          }}
+        />
+      )}
 
       {/* The same pill the viewer shows, for the same load — opening a scene
           here runs the identical path, and the editor said nothing at all while
@@ -4386,7 +4653,12 @@ export default function Lab() {
             in their flex row, so a wider search bar or a longer model name
             never pushes it off centre. */}
         <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2">
-          <ModeToolbar mode={openModelRow} onPick={setOpenModelRow} />
+          <ModeToolbar
+            mode={openModelRow}
+            onPick={setOpenModelRow}
+            overlayHidden={overlayHidden}
+            onToggleOverlay={() => setOverlayHidden((v) => !v)}
+          />
         </div>
         <div className="pointer-events-none absolute top-3 right-3 left-3 flex items-start gap-2">
           {/* Same 17rem as the open panel: this is a DROPDOWN, not a sidebar —
@@ -4567,6 +4839,11 @@ export default function Lab() {
             onPickStyle={(name) => {
               if (castEntry && pickedMaterial) setMaterialGraph(castEntry.id, pickedMaterial, name)
             }}
+            materialVisible={pickedMaterialVisible}
+            onToggleMaterialVisible={() => {
+              if (castEntry && pickedMaterial) toggleMaterialVisible(castEntry.id, pickedMaterial)
+            }}
+            selectedFaceCount={selectedFaces.length}
             files={bundleFiles()}
             baseDir={castDir}
             onEditBone={editBone}
