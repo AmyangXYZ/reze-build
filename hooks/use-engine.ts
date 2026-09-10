@@ -1379,7 +1379,18 @@ export function useEngine(
    * canvas does not catch up until reload.
    */
   const reloadModelDocument = useCallback(
-    async (modelId: string, doc: PmxDocument): Promise<void> => {
+    async (
+      modelId: string,
+      doc: PmxDocument,
+      /** Styles to apply once the reload lands — the CURRENT groupsByModel
+       *  by default, but a caller that is ALSO changing group membership in
+       *  the same edit (a split moving a material into a new name, say) must
+       *  pass the already-updated list: groupsByModel only catches up once
+       *  its own state update lands, which is not guaranteed before this
+       *  runs — this read would otherwise style the reload with what group
+       *  membership looked like before the edit that triggered it. */
+      groupsOverride?: StyleGroup[],
+    ): Promise<void> => {
       const engine = engineRef.current
       if (!engine) return
       const bytes = writePmxDocument(doc)
@@ -1408,7 +1419,7 @@ export function useEngine(
       // Hidden the instant it exists — nothing above this line awaited
       // since, so no frame has run with it out in the open yet.
       engine.setModelTransform(stagingId, { visible: false })
-      const groups = groupsByModel[modelId]
+      const groups = groupsOverride ?? groupsByModel[modelId]
       if (groups?.length) {
         reportGroups("reload", await engine.applyStyleGroups(stagingId, groups.filter((g) => g.materials.length > 0)))
       }

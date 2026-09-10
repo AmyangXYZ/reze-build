@@ -2872,12 +2872,24 @@ export default function Lab() {
     const result = splitMaterial(pmxDoc, { name: pickedMaterial, faceIndices: selectedFaces, newName, keptName })
     if (result.document === pmxDoc) return
     editDoc(() => result)
-    void reloadModelDocument(castEntry.id, result.document)
+    // A split is a document-level cut, not a style decision: both halves
+    // keep rendering through whatever graph the original did, so the group
+    // that already claims this material gains a member rather than losing
+    // one. Ungrouped stays ungrouped — nothing to move.
+    const groups = groupsByModel[castEntry.id] ?? []
+    const owner = groups.find((g) => g.materials.includes(pickedMaterial))
+    const nextGroups = owner
+      ? groups.map((g) =>
+          g === owner ? { ...g, materials: [...g.materials.filter((m) => m !== pickedMaterial), keptName, newName] } : g,
+        )
+      : groups
+    if (owner) void applyGroups(castEntry.id, nextGroups)
+    void reloadModelDocument(castEntry.id, result.document, nextGroups)
     setSelectedFaces([])
     engineRef.current?.setOverlay("selection", [])
     engineRef.current?.setSelectionFill(null, null, [])
     setPickedMaterial(newName)
-  }, [castEntry, pickedMaterial, pmxDoc, selectedFaces, editDoc, reloadModelDocument, engineRef])
+  }, [castEntry, pickedMaterial, pmxDoc, selectedFaces, editDoc, reloadModelDocument, engineRef, groupsByModel, applyGroups])
 
   /** Remove the current selection outright — see deleteMaterialFaces for why
    *  the vertices themselves are never touched. */
