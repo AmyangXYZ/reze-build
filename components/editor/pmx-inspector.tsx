@@ -27,6 +27,9 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ColorField } from "@/components/color-picker"
+import { SliderRow } from "@/components/scene/scene-sidebar"
+import { AxisSliderRow } from "@/components/scene/axis-slider-row"
+import { TRA_CHANNELS } from "@/lib/animation"
 import { rgbToHex, hexToRgba } from "@/lib/color"
 import { assetUrl } from "@/lib/scene"
 import { cn } from "@/lib/utils"
@@ -353,7 +356,32 @@ const MATERIAL_FLAGS = [
   "line draw",
 ]
 
-function BoneFields({ bone, doc, edit }: { bone: PmxBone; doc: PmxDocument; edit: EditBone }) {
+function BoneFields({
+  bone,
+  doc,
+  edit,
+  scale,
+  onPreviewScale,
+  onCommitScale,
+  move,
+  onPreviewMove,
+  onCommitMove,
+}: {
+  bone: PmxBone
+  doc: PmxDocument
+  edit: EditBone
+  /** The scale slider's OWN displayed value — never the document's, which
+   *  has no "scale" field to read: this is a gesture, always 100% at rest,
+   *  that bakes into the chain's own new positions on release. */
+  scale: number
+  onPreviewScale: (v: number) => void
+  onCommitScale: (v: number) => void
+  /** Same shape as scale, three axes: a WORLD-space offset slid the bone's
+   *  own chain by, always reading back to zero at rest. */
+  move: [number, number, number]
+  onPreviewMove: (v: [number, number, number]) => void
+  onCommitMove: (v: [number, number, number]) => void
+}) {
   const boneName = (i: number | undefined) =>
     i === undefined || i < 0 || i >= doc.bones.length ? "—" : doc.bones[i].name
   return (
@@ -368,6 +396,56 @@ function BoneFields({ bone, doc, edit }: { bone: PmxBone; doc: PmxDocument; edit
         <Field label="Position">
           <VecCell v={bone.position} onCommit={(v) => edit({ position: v })} />
         </Field>
+        {/* PMXEditor's own bone-scale operation: this bone (and everything
+            below it, and every vertex weighted to any of it) scales away
+            from its OWN PARENT — a leaf like a breast bone, almost always
+            the thing a real MMD rig weights the mesh straight to rather than
+            to some child underneath it, is what grows. A gesture, not a
+            field — the slider snaps back to 100% the moment it is released,
+            not a value read off this bone. */}
+        <div className="mt-1.5 px-4">
+          <SliderRow
+            label="Scale"
+            value={scale}
+            min={0.1}
+            max={3}
+            step={0.01}
+            fmt={(v) => `${Math.round(v * 100)}%`}
+            onChange={onPreviewScale}
+            onCommit={onCommitScale}
+          />
+        </div>
+        {/* Same PMXEditor pairing as Scale above: the bone's own chain and
+            its weighted vertices slide together by a WORLD-space offset,
+            away from zero rather than toward a fixed field value — distinct
+            from the raw Position field's own single-bone edit. The pose
+            dock's own row and its own per-axis colours (reze-studio's, via
+            TRA_CHANNELS) so a translate reads the same way here as it does
+            there, origin=0 since this is a signed delta, not an absolute. */}
+        <div className="mt-1.5 px-4">
+          {TRA_CHANNELS.map((ch, i) => (
+            <AxisSliderRow
+              key={ch.key}
+              axis={["X", "Y", "Z"][i]}
+              color={ch.color}
+              value={move[i]}
+              min={ch.range.min}
+              max={ch.range.max}
+              decimals={2}
+              origin={0}
+              onChange={(v) => {
+                const next: [number, number, number] = [...move]
+                next[i] = v
+                onPreviewMove(next)
+              }}
+              onCommit={(v) => {
+                const next: [number, number, number] = [...move]
+                next[i] = v
+                onCommitMove(next)
+              }}
+            />
+          ))}
+        </div>
         {/* Read-only: an index into the bone list. Re-parenting has to move the
             bone in document order and repair every reference that follows it,
             which is its own transform. */}
@@ -620,6 +698,12 @@ export function PmxInspector({
   materialVisible,
   onToggleMaterialVisible,
   selectedFaceCount,
+  boneScale,
+  onPreviewBoneScale,
+  onCommitBoneScale,
+  boneMove,
+  onPreviewBoneMove,
+  onCommitBoneMove,
   files,
   baseDir,
   onEditBone,
@@ -646,6 +730,16 @@ export function PmxInspector({
    *  material — see MaterialFields for why there is no arming step, and the
    *  canvas's right-click menu for what a selection can become. */
   selectedFaceCount: number
+  /** The bone-scale slider's OWN value — see BoneFields for why it is never
+   *  read off the document. */
+  boneScale: number
+  onPreviewBoneScale: (v: number) => void
+  onCommitBoneScale: (v: number) => void
+  /** Same shape, three axes: a WORLD-space offset the bone's own chain
+   *  slides by. */
+  boneMove: [number, number, number]
+  onPreviewBoneMove: (v: [number, number, number]) => void
+  onCommitBoneMove: (v: [number, number, number]) => void
   /** Everything that arrived with the .pmx — the disk-opened case. */
   files: File[]
   /** The .pmx's own directory — the served case. */
@@ -701,7 +795,17 @@ export function PmxInspector({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {boneEntry ? (
-          <BoneFields bone={boneEntry} doc={doc} edit={(p) => onEditBone({ ...p, name: boneEntry.name })} />
+          <BoneFields
+            bone={boneEntry}
+            doc={doc}
+            edit={(p) => onEditBone({ ...p, name: boneEntry.name })}
+            scale={boneScale}
+            onPreviewScale={onPreviewBoneScale}
+            onCommitScale={onCommitBoneScale}
+            move={boneMove}
+            onPreviewMove={onPreviewBoneMove}
+            onCommitMove={onCommitBoneMove}
+          />
         ) : (
           <MaterialFields
             material={materialEntry!}

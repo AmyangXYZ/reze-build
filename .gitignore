@@ -43,6 +43,8 @@ next-env.d.ts
 # Third-party MMD assets dropped in for testing — never ours to commit
 /【*】*/
 /Models/
+/PmxDressup_1.00.03/
+/pmx_dressup/
 # Motions and models dropped at the root or into public/models to reproduce a
 # bug. public/animations and the default scene's model are ours and stay tracked.
 /*.vmd

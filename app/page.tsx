@@ -119,7 +119,11 @@ import { useDockSlot } from "@/hooks/use-dock-slot"
 import { useZOrder } from "@/hooks/use-z-order"
 import { PmxInspector } from "@/components/editor/pmx-inspector"
 import {
+  computeBoneMove,
+  computeBoneScale,
   deleteMaterialFaces,
+  moveBone,
+  scaleBone,
   setBones,
   setMaterials,
   setModelInfo,
@@ -2905,6 +2909,113 @@ export default function Lab() {
   }, [castEntry, pickedMaterial, pmxDoc, selectedFaces, editDoc, reloadModelDocument, engineRef])
 
   /**
+   * PMXEditor's own bone-scale and bone-move operations: drag away from
+   * 100% (or from a zero offset) and the picked bone — its descendant
+   * chain too, and every vertex weighted to any of them — scales away from
+   * its OWN PARENT, or slides by the given amount. See computeBoneScale for
+   * why the picked bone moves too rather than only what is below it.
+   *
+   * Neither slider's displayed value is the document's own state — a
+   * gesture, not a stored property, so each always reads back to rest
+   * (100%, or zero) the instant it is released or the pick changes; what
+   * persists is the bones' and vertices' own new positions, baked in by
+   * then.
+   *
+   * Both share ONE baseline document, captured fresh from pmxDoc the moment
+   * a DIFFERENT control starts being dragged than whichever last touched
+   * it. Same control, same session: computing every drag from that one
+   * frozen snapshot (never from wherever the PREVIOUS commit left things)
+   * is what makes "scale up then back to 100%" land on the exact original
+   * — composing two independent partial-weight blends is not generally
+   * reversible, but replaying the SAME blend once, from a stable base, at
+   * whatever the slider currently reads, always is. Switching to the OTHER
+   * control re-freezes the baseline from the document as it now stands, so
+   * it still builds on top of whatever that first control committed rather
+   * than discarding it.
+   */
+  const boneEditBaseline = useRef<PmxDocument | null>(null)
+  const boneEditControl = useRef<"scale" | "move" | null>(null)
+  const [boneScalePreview, setBoneScalePreview] = useState(1)
+  const [boneMovePreview, setBoneMovePreview] = useState<[number, number, number]>([0, 0, 0])
+  useEffect(() => {
+    setBoneScalePreview(1)
+    setBoneMovePreview([0, 0, 0])
+    boneEditBaseline.current = null
+    boneEditControl.current = null
+    // castEntry?.id, not castEntry itself — reloadModelDocument rebuilds
+    // that object (a fresh setModels) on every commit, for the SAME model.
+    // Keying on the object meant every commit's own reload wiped the
+    // baseline it had just been the point of, and the next drag silently
+    // re-captured one from the document THAT commit had just produced —
+    // "revert to 100%" reverting to itself instead of the true original.
+  }, [pickedBone, castEntry?.id])
+
+  const boneEditStart = useCallback(
+    (control: "scale" | "move"): PmxDocument | null => {
+      if (boneEditControl.current !== control || !boneEditBaseline.current) {
+        boneEditBaseline.current = pmxDoc
+        boneEditControl.current = control
+      }
+      return boneEditBaseline.current
+    },
+    [pmxDoc],
+  )
+
+  const previewBoneScale = useCallback(
+    (scale: number) => {
+      setBoneScalePreview(scale)
+      if (!castEntry || !pickedBone) return
+      const baseline = boneEditStart("scale")
+      if (!baseline) return
+      const update = computeBoneScale(baseline, pickedBone, scale)
+      if (!update) return
+      engineRef.current?.setBoneBindPositions(castEntry.id, update.bones)
+      engineRef.current?.setVertexPositions(castEntry.id, update.vertices)
+    },
+    [castEntry, pickedBone, boneEditStart, engineRef],
+  )
+  const commitBoneScale = useCallback(
+    (scale: number) => {
+      setBoneScalePreview(1)
+      const baseline = boneEditBaseline.current
+      if (!castEntry || !pickedBone || !baseline) return
+      const result = scaleBone(baseline, { name: pickedBone, scale })
+      editDoc(() => result)
+      // The live preview already left the CURRENT model in this exact shape
+      // — this reload is the same safety net split/delete use, rebuilding
+      // whatever it touched (wireframe edges, style groups) from a document
+      // now known consistent, not a visible correction to what is on screen.
+      void reloadModelDocument(castEntry.id, result.document)
+    },
+    [castEntry, pickedBone, editDoc, reloadModelDocument],
+  )
+
+  const previewBoneMove = useCallback(
+    (offset: [number, number, number]) => {
+      setBoneMovePreview(offset)
+      if (!castEntry || !pickedBone) return
+      const baseline = boneEditStart("move")
+      if (!baseline) return
+      const update = computeBoneMove(baseline, pickedBone, offset)
+      if (!update) return
+      engineRef.current?.setBoneBindPositions(castEntry.id, update.bones)
+      engineRef.current?.setVertexPositions(castEntry.id, update.vertices)
+    },
+    [castEntry, pickedBone, boneEditStart, engineRef],
+  )
+  const commitBoneMove = useCallback(
+    (offset: [number, number, number]) => {
+      setBoneMovePreview([0, 0, 0])
+      const baseline = boneEditBaseline.current
+      if (!castEntry || !pickedBone || !baseline) return
+      const result = moveBone(baseline, { name: pickedBone, offset })
+      editDoc(() => result)
+      void reloadModelDocument(castEntry.id, result.document)
+    },
+    [castEntry, pickedBone, editDoc, reloadModelDocument],
+  )
+
+  /**
    * Click the model to select what you clicked.
    *
    * The list in the dock and the overlay on the canvas are two views of one
@@ -4859,6 +4970,12 @@ export default function Lab() {
               if (castEntry && pickedMaterial) toggleMaterialVisible(castEntry.id, pickedMaterial)
             }}
             selectedFaceCount={selectedFaces.length}
+            boneScale={boneScalePreview}
+            onPreviewBoneScale={previewBoneScale}
+            onCommitBoneScale={commitBoneScale}
+            boneMove={boneMovePreview}
+            onPreviewBoneMove={previewBoneMove}
+            onCommitBoneMove={commitBoneMove}
             files={bundleFiles()}
             baseDir={castDir}
             onEditBone={editBone}

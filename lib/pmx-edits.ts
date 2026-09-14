@@ -13,7 +13,7 @@
 // Each returns a NEW document sharing everything it did not touch. Cheap to
 // apply, trivial to undo (keep the previous one), and safe to preview.
 
-import type { PmxBone, PmxDocument, PmxMaterial } from "reze-engine"
+import type { PmxBone, PmxDocument, PmxMaterial, PmxVertex } from "reze-engine"
 
 /** What an edit did, so a panel can report it and a preview can show it. */
 export interface EditResult {
@@ -217,6 +217,210 @@ export function setBones(doc: PmxDocument, params: SetBonesParams): EditResult {
     document: { ...doc, bones },
     summary: changed === 1 ? `Edited ${params.bones[0].name}` : `Edited ${changed} bones`,
     missing,
+  }
+}
+
+/** How much of a vertex's own blend weight sits on bones IN a set — 0 to 1,
+ *  the fraction of it that ought to move with them. BDEF1 is all-or-nothing;
+ *  BDEF2 and SDEF split between exactly two bones, the second implied
+ *  (1 - the first); BDEF4 and QDEF are four independent pairs. A vertex split
+ *  between an affected bone and one that is not gets a PARTIAL fraction, so
+ *  a chain's own boundary fades under a scale instead of tearing. */
+function weightFractionOnBones(v: PmxVertex, affected: ReadonlySet<number>): number {
+  const { bones, weights, weightType } = v
+  if (weightType === 0) return affected.has(bones[0]) ? 1 : 0
+  if (weightType === 1 || weightType === 3) {
+    const w0 = weights[0] ?? 0
+    let sum = 0
+    if (affected.has(bones[0])) sum += w0
+    if (affected.has(bones[1])) sum += 1 - w0
+    return sum
+  }
+  let sum = 0
+  for (let i = 0; i < bones.length; i++) if (affected.has(bones[i])) sum += weights[i] ?? 0
+  return sum
+}
+
+/** What a scale of `boneName` by `scale` moves — the bones and the vertices
+ *  alike, as WORLD positions ready to write straight back into the
+ *  document (or hand to the engine's live setBoneBindPositions /
+ *  setVertexPositions for a preview, which is the other caller: the two
+ *  must never compute a different answer for the same drag). Null only when
+ *  the bone itself is not found. */
+export interface BoneScaleUpdate {
+  bones: { index: number; position: [number, number, number] }[]
+  vertices: { index: number; position: [number, number, number] }[]
+}
+
+export function computeBoneScale(doc: PmxDocument, boneName: string, scale: number): BoneScaleUpdate | null {
+  const boneIndex = doc.bones.findIndex((b) => b.name === boneName)
+  if (boneIndex < 0) return null
+  const bone = doc.bones[boneIndex]
+
+  // The picked bone scales away from its OWN PARENT, not from itself — pick
+  // a limb's own root and the limb grows from the joint above it; pick a
+  // leaf with nothing below it (a breast bone, almost always exactly this
+  // shape in an MMD rig: the mesh is weighted straight to it, not to some
+  // child underneath) and IT is what grows, which a pivot-at-itself design
+  // has nothing left to move. A root bone (no parent) falls back to its own
+  // position: there is nothing else to anchor against.
+  const parentIndex = bone.parentIndex
+  const pivot = parentIndex >= 0 && parentIndex < doc.bones.length ? doc.bones[parentIndex].position : bone.position
+
+  // PMX's own hierarchy is parent-pointers only — the child lists a scale
+  // needs to walk down FROM the picked bone exist nowhere else in the document.
+  const childrenOf = new Map<number, number[]>()
+  doc.bones.forEach((b, i) => {
+    if (b.parentIndex < 0) return
+    const list = childrenOf.get(b.parentIndex)
+    if (list) list.push(i)
+    else childrenOf.set(b.parentIndex, [i])
+  })
+  const affected = new Set<number>([boneIndex])
+  const stack = [...(childrenOf.get(boneIndex) ?? [])]
+  while (stack.length) {
+    const i = stack.pop()!
+    if (affected.has(i)) continue
+    affected.add(i)
+    for (const c of childrenOf.get(i) ?? []) stack.push(c)
+  }
+
+  const scaled = (p: readonly [number, number, number]): [number, number, number] => [
+    pivot[0] + (p[0] - pivot[0]) * scale,
+    pivot[1] + (p[1] - pivot[1]) * scale,
+    pivot[2] + (p[2] - pivot[2]) * scale,
+  ]
+
+  const bones = [...affected].map((index) => ({ index, position: scaled(doc.bones[index].position) }))
+
+  const vertices: { index: number; position: [number, number, number] }[] = []
+  for (let v = 0; v < doc.vertices.length; v++) {
+    const vert = doc.vertices[v]
+    const w = weightFractionOnBones(vert, affected)
+    if (w <= 0) continue
+    const p = vert.position
+    const s = scaled(p)
+    vertices.push({
+      index: v,
+      position: [p[0] + (s[0] - p[0]) * w, p[1] + (s[1] - p[1]) * w, p[2] + (s[2] - p[2]) * w],
+    })
+  }
+
+  return { bones, vertices }
+}
+
+export interface ScaleBoneParams {
+  /** The bone that scales — see computeBoneScale for why it moves too,
+   *  not just what is below it. */
+  name: string
+  /** 1 = unchanged, 1.5 = 150%, 0.5 = half. Uniform on all three axes. */
+  scale: number
+}
+
+/**
+ * Scales one bone (and its descendant chain), and every vertex weighted to
+ * any of them, away from (or toward) the bone's OWN PARENT — PMXEditor's own
+ * bone-scale operation. The chain's OWN local offsets stay internally
+ * consistent automatically: every affected bone's position is computed
+ * straight from the pivot, not accumulated step by step down the chain.
+ *
+ * Every vertex MORPH offset is a relative delta and is left exactly as it
+ * is — moving the base vertex under it and leaving the offset alone is what
+ * keeps a morph correct after the body it targets has been resized.
+ */
+export function scaleBone(doc: PmxDocument, params: ScaleBoneParams): EditResult {
+  const { name, scale } = params
+  const update = computeBoneScale(doc, name, scale)
+  if (!update) return { document: doc, summary: "Changed nothing", missing: [name] }
+
+  return {
+    document: applyBoneUpdate(doc, update),
+    summary: `Scaled ${name} to ${Math.round(scale * 100)}% (${update.bones.length} bones, ${update.vertices.length} vertices)`,
+    missing: [],
+  }
+}
+
+/** Writes a BoneScaleUpdate's bone and vertex positions into a document —
+ *  shared by scaleBone and moveBone, which differ only in how they compute
+ *  the update, never in how it lands. */
+function applyBoneUpdate(doc: PmxDocument, update: BoneScaleUpdate): PmxDocument {
+  const bones = doc.bones.slice()
+  for (const { index, position } of update.bones) bones[index] = { ...bones[index], position }
+  const vertices = doc.vertices.slice()
+  for (const { index, position } of update.vertices) vertices[index] = { ...vertices[index], position }
+  return { ...doc, bones, vertices }
+}
+
+/** What moving `boneName` by `offset` (a WORLD-space delta) moves — the bone
+ *  itself, its descendant chain, and every vertex weighted to any of them,
+ *  all by the SAME offset. Unlike a scale there is no pivot to speak of:
+ *  every affected position just adds the same vector, blended by weight
+ *  fraction for a vertex split between an affected bone and one that is
+ *  not — same shape as computeBoneScale, sharing weightFractionOnBones,
+ *  differing only in the transform applied to each position. */
+export function computeBoneMove(doc: PmxDocument, boneName: string, offset: readonly [number, number, number]): BoneScaleUpdate | null {
+  const boneIndex = doc.bones.findIndex((b) => b.name === boneName)
+  if (boneIndex < 0) return null
+
+  const childrenOf = new Map<number, number[]>()
+  doc.bones.forEach((b, i) => {
+    if (b.parentIndex < 0) return
+    const list = childrenOf.get(b.parentIndex)
+    if (list) list.push(i)
+    else childrenOf.set(b.parentIndex, [i])
+  })
+  const affected = new Set<number>([boneIndex])
+  const stack = [...(childrenOf.get(boneIndex) ?? [])]
+  while (stack.length) {
+    const i = stack.pop()!
+    if (affected.has(i)) continue
+    affected.add(i)
+    for (const c of childrenOf.get(i) ?? []) stack.push(c)
+  }
+
+  const moved = (p: readonly [number, number, number]): [number, number, number] => [
+    p[0] + offset[0],
+    p[1] + offset[1],
+    p[2] + offset[2],
+  ]
+
+  const bones = [...affected].map((index) => ({ index, position: moved(doc.bones[index].position) }))
+
+  const vertices: { index: number; position: [number, number, number] }[] = []
+  for (let v = 0; v < doc.vertices.length; v++) {
+    const vert = doc.vertices[v]
+    const w = weightFractionOnBones(vert, affected)
+    if (w <= 0) continue
+    const p = vert.position
+    vertices.push({ index: v, position: [p[0] + offset[0] * w, p[1] + offset[1] * w, p[2] + offset[2] * w] })
+  }
+
+  return { bones, vertices }
+}
+
+export interface MoveBoneParams {
+  name: string
+  /** WORLD-space delta in PMX units, applied to the bone, its descendant
+   *  chain, and every vertex weighted to any of them. */
+  offset: [number, number, number]
+}
+
+/**
+ * Moves one bone (and its descendant chain), and every vertex weighted to
+ * any of them, by the same WORLD-space offset — the slider-driven twin of
+ * scaleBone, and PMXEditor's own bone-position operation. Every vertex
+ * MORPH offset is left exactly as it is, for the same reason scaleBone
+ * leaves them: a relative delta stays correct under a moved base vertex.
+ */
+export function moveBone(doc: PmxDocument, params: MoveBoneParams): EditResult {
+  const { name, offset } = params
+  const update = computeBoneMove(doc, name, offset)
+  if (!update) return { document: doc, summary: "Changed nothing", missing: [name] }
+
+  return {
+    document: applyBoneUpdate(doc, update),
+    summary: `Moved ${name} (${update.bones.length} bones, ${update.vertices.length} vertices)`,
+    missing: [],
   }
 }
 

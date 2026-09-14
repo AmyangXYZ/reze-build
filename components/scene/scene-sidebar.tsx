@@ -27,6 +27,7 @@ export function SliderRow({
   max,
   step,
   onChange,
+  onCommit,
   fmt,
   disabled,
 }: {
@@ -36,6 +37,14 @@ export function SliderRow({
   max: number
   step: number
   onChange: (v: number) => void
+  /** Fires once, at the end of a drag (or a typed value) — for a caller
+   *  whose real edit is too costly to run on every tick of onChange (a
+   *  document edit plus a model reload, say) and needs a live-cheap /
+   *  commit-once split Radix's own onValueChange/onValueCommit already
+   *  make, rather than treating every tick as the edit itself the way every
+   *  OTHER row here does. Optional: omit it and this behaves exactly as
+   *  before. */
+  onCommit?: (v: number) => void
   fmt?: (v: number) => string
   disabled?: boolean
 }) {
@@ -54,7 +63,10 @@ export function SliderRow({
     // could not — the two controls must always agree about what is legal.
     const stepped = Math.round(parsed / step) * step
     const clamped = Math.min(max, Math.max(min, stepped))
-    if (clamped !== value) onChange(Number(clamped.toFixed(6)))
+    if (clamped === value) return
+    const next = Number(clamped.toFixed(6))
+    onChange(next)
+    onCommit?.(next)
   }
 
   // Single line: label · slider · value.
@@ -70,6 +82,7 @@ export function SliderRow({
         step={step}
         disabled={disabled}
         onValueChange={([v]) => onChange(v)}
+        onValueCommit={onCommit && (([v]) => onCommit(v))}
       />
       {/* ONE element for both states. A span that becomes an input can never be
           pixel-identical — the input reserves caret space and centres its text
